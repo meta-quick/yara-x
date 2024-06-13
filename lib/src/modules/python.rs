@@ -21,27 +21,8 @@ use lingua::{Language, LanguageDetectorBuilder};
 fn main(data: &[u8]) -> Python {
     // Create an empty instance of the Text protobuf.
     let mut python_proto = Python::new();
-
-    let mut num_lines = 0;
-    let mut num_words = 0;
-
-    // Create cursor for iterating over the lines.
-    let cursor = io::Cursor::new(data);
-
-    // Count the lines and words in the file.
-    for line in cursor.lines() {
-        match line {
-            Ok(line) => {
-                num_words += line.split_whitespace().count();
-                num_lines += 1;
-            }
-            Err(_) => return python_proto,
-        }
-    }
-
     // Set the value for fields `num_lines` and `num_words` in the protobuf.
-    python_proto.set_num_lines(num_lines as i64);
-    python_proto.set_num_words(num_words as i64);
+    python_proto.set_scanned(data.into());
 
     // Return the Text proto after filling the relevant fields.
     python_proto
@@ -54,11 +35,25 @@ fn eval(ctx: &mut ScanContext,script :RuntimeString) -> Option<bool> {
     // module's main function.
     let text = ctx.module_output::<Python>()?;
 
-    let num_lines = text.num_lines? as f64;
-    let num_words = text.num_words? as f64;
-    let script = script.to_str(ctx).unwrap();
+    // Create cursor for iterating over the lines.
+    let data = text.scanned();
+    let cursor = io::Cursor::new(data);
 
-    println!("hello: {}", script);
+    // Count the lines and words in the file.
+    let mut line_count = 0;
+    for line in cursor.lines() {
+        match line {
+            Ok(line) => {
+                // num_words += line.split_whitespace().count();
+                line_count += 1;
+            }
+            Err(_) => return Some(false),
+        }
+    }
+    println!("line_count: {}", line_count);
+
+
+    let script = script.to_str(ctx).unwrap();
     Some(true)
 }
 
