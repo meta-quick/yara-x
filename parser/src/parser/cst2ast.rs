@@ -573,7 +573,7 @@ fn pattern_from_cst<'src>(
                 modifiers,
             }))
         }
-        GrammarRule::string_lit => {
+        GrammarRule::string_lit | GrammarRule::multiline_string_lit => {
             let span = ctx.span(&node);
             let text = string_lit_from_cst(ctx, node, true)?;
             let modifiers = if let Some(modifiers) = children.next() {
@@ -1217,7 +1217,7 @@ fn primary_expr_from_cst<'src>(
             expect!(children.next().unwrap(), GrammarRule::RPAREN);
             expr
         }
-        GrammarRule::string_lit => {
+        GrammarRule::string_lit | GrammarRule::multiline_string_lit => {
             Expr::LiteralString(Box::new(LiteralString::new(
                 node.as_span().as_str(),
                 ctx.span(&node),

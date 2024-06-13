@@ -14,6 +14,8 @@ add_module!(modules, "text", text, "text.Text", Some("text"), Some(text::__main_
 add_module!(modules, "dotnet", dotnet, "dotnet.Dotnet", Some("dotnet"), Some(dotnet::__main__ as MainFn));
 #[cfg(feature = "lnk-module")]
 add_module!(modules, "lnk", lnk, "lnk.Lnk", Some("lnk"), Some(lnk::__main__ as MainFn));
+#[cfg(feature = "python-module")]
+add_module!(modules, "python", python, "python.Python", Some("python"), Some(python::__main__ as MainFn));
 #[cfg(feature = "hash-module")]
 add_module!(modules, "hash", hash, "hash.Hash", Some("hash"), Some(hash::__main__ as MainFn));
 #[cfg(feature = "magic-module")]

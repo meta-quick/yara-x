@@ -13,6 +13,8 @@ mod text;
 mod dotnet;
 #[cfg(feature = "lnk-module")]
 mod lnk;
+#[cfg(feature = "python-module")]
+mod python;
 #[cfg(feature = "hash-module")]
 mod hash;
 #[cfg(feature = "magic-module")]

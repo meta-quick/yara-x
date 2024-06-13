@@ -337,6 +337,7 @@ pattern_defs = {
 pattern_def = {
   pattern_ident ~ EQUAL ~
   (
+    multiline_string_lit ~ pattern_mods? |
     string_lit ~ pattern_mods? |
     regexp ~ pattern_mods? |
     hex_pattern ~ pattern_mods?
@@ -457,6 +458,7 @@ func_call_expr = {
 primary_expr = {
   float_lit                                            |
   integer_lit                                          |
+  multiline_string_lit                                 |
   string_lit                                           |
   pattern_count ~ (k_IN ~ range)?                      |
   pattern_offset ~ (LBRACKET ~ expr ~ RBRACKET)?       |
