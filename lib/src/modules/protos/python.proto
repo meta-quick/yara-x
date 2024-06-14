@@ -8,7 +8,7 @@ package python;
 option (yara.module_options) = {
   // This is the module's name, the one used when importing the module in a
   // YARA rule.
-  name : "python"
+  name : "rhai"
   // The module's root structure is defined by the `Text` module, which can
   // be found below.
   root_message: "python.Python"

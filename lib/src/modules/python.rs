@@ -1,12 +1,12 @@
+use std::io;
+use std::io::BufRead;
+use std::ops::Range;
 // Example "text" module described in the Module's Developer Guide.
 //
 use crate::modules::prelude::*;
 use crate::modules::protos::python::*;
 
-use std::io;
-use std::io::BufRead;
-
-use lingua::{Language, LanguageDetectorBuilder};
+use rhai::{Engine, Scope, Array, Dynamic, INT, CustomType, TypeBuilder};
 
 /// Module's main function.
 ///
@@ -34,27 +34,59 @@ fn eval(ctx: &mut ScanContext,script :RuntimeString) -> Option<bool> {
     // Obtain a reference to the `Text` protobuf that was returned by the
     // module's main function.
     let text = ctx.module_output::<Python>()?;
+    let script = script.to_str(ctx).unwrap();
+    let data  = text.scanned();
+    let mut engine = Engine::new();
+    let mut scope = Scope::new();
 
-    // Create cursor for iterating over the lines.
-    let data = text.scanned();
-    let cursor = io::Cursor::new(data);
+    // Create an array and push the scanned data into it.
+    let rhai_array = data.iter().map(|x| Dynamic::from(*x as INT)).collect::<Vec<_>>();
+    scope.push("scanned", rhai_array);
 
-    // Count the lines and words in the file.
-    let mut line_count = 0;
+    engine.register_fn("lines", lines);
+    engine.register_fn("add", add);
+
+    let result = engine.run_with_scope(&mut scope, script);
+    match result {
+       Ok(_) => {
+          let scope_result =  scope.get_value::<bool>("result");
+           match scope_result {
+               Some(br) => {
+                   return Some(br);
+               }
+               None => {
+                   return Some(false);
+               }
+           }
+       }
+       Err(err) => {
+           println!("{}", err);
+           return Some(false);
+       }
+    }
+}
+
+fn lines(data:  Vec<Dynamic>) -> Vec<Dynamic> {
+    let xdata = data.iter().map(|x| x.as_int().unwrap() as u8).collect::<Vec<_>>();
+    let mut cursor = io::Cursor::new(xdata);
+
+    let mut lines = Vec::new();
+
     for line in cursor.lines() {
         match line {
             Ok(line) => {
-                // num_words += line.split_whitespace().count();
-                line_count += 1;
+                lines.push(line);
             }
-            Err(_) => return Some(false),
+            Err(_) => { },
         }
     }
-    println!("line_count: {}", line_count);
+    let dynamic_array = lines.into_iter()
+        .map(Dynamic::from)
+        .collect();
 
-
-    let script = script.to_str(ctx).unwrap();
-    Some(true)
+    return dynamic_array;
 }
 
-
+fn add(x: i64, y: i64) -> i64 {
+    x + y
+}
