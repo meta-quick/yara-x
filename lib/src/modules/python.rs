@@ -42,9 +42,12 @@ fn eval(ctx: &mut ScanContext,script :RuntimeString) -> Option<bool> {
     // Create an array and push the scanned data into it.
     let rhai_array = data.iter().map(|x| Dynamic::from(*x as INT)).collect::<Vec<_>>();
     scope.push("scanned", rhai_array);
+    // Convert data to lines of strings
+    let data_lines = lines_udata(&data);
+    scope.push("scanned_lines", data_lines);
 
     engine.register_fn("lines", lines);
-    engine.register_fn("add", add);
+
 
     let result = engine.run_with_scope(&mut scope, script);
     match result {
@@ -67,8 +70,12 @@ fn eval(ctx: &mut ScanContext,script :RuntimeString) -> Option<bool> {
 }
 
 fn lines(data:  Vec<Dynamic>) -> Vec<Dynamic> {
-    let xdata = data.iter().map(|x| x.as_int().unwrap() as u8).collect::<Vec<_>>();
-    let mut cursor = io::Cursor::new(xdata);
+    let xdata = data.iter().map(|x| x.as_int().unwrap() as u8).collect::<Vec<u8>>();
+    return lines_udata(&xdata);
+}
+
+fn lines_udata(data:  &[u8]) -> Vec<Dynamic> {
+    let mut cursor = io::Cursor::new(data);
 
     let mut lines = Vec::new();
 
@@ -87,6 +94,3 @@ fn lines(data:  Vec<Dynamic>) -> Vec<Dynamic> {
     return dynamic_array;
 }
 
-fn add(x: i64, y: i64) -> i64 {
-    x + y
-}
