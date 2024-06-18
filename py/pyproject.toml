@@ -3,7 +3,7 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "yara-x"
+name = "ezyara"
 description = "Python bindings for YARA-X"
 requires-python = ">=3.8"
 readme = "README.md"

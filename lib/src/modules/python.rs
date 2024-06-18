@@ -1,12 +1,11 @@
 use std::io;
 use std::io::BufRead;
-use std::ops::Range;
 // Example "text" module described in the Module's Developer Guide.
 //
 use crate::modules::prelude::*;
 use crate::modules::protos::python::*;
 
-use rhai::{Engine, Scope, Array, Dynamic, INT, CustomType, TypeBuilder};
+use rhai::{Engine, Scope, Dynamic, INT};
 
 /// Module's main function.
 ///
@@ -75,7 +74,7 @@ fn lines(data:  Vec<Dynamic>) -> Vec<Dynamic> {
 }
 
 fn lines_udata(data:  &[u8]) -> Vec<Dynamic> {
-    let mut cursor = io::Cursor::new(data);
+    let cursor = io::Cursor::new(data);
 
     let mut lines = Vec::new();
 
