@@ -64,12 +64,12 @@ pub fn scan() -> Command {
         .arg(
             arg!(-C --"compiled-rules")
                 .help("Indicate that RULES_PATH is a file with compiled rules")
-                .long_help(help::COMPILED_RULES_HELP)
+                .long_help(help::COMPILED_RULES_LONG_HELP)
         )
         .arg(
             arg!(--"scan-list")
                 .help("Indicate that TARGET_PATH is a file containing the paths to be scanned")
-                .long_help(help::SCAN_LIST_HELP)
+                .long_help(help::SCAN_LIST_LONG_HELP)
         )
         .arg(
             arg!(-z --"skip-larger" <FILE_SIZE>)
@@ -92,6 +92,16 @@ pub fn scan() -> Command {
         .arg(
             arg!(--"relaxed-re-syntax")
                 .help("Use a more relaxed syntax check while parsing regular expressions")
+        )
+        .arg(
+            arg!(-w --"disable-warnings" [WARNING_ID])
+                .help("Disable warnings")
+                .long_help(help::DISABLE_WARNINGS_LONG_HELP)
+                .default_missing_value("all")
+                .num_args(0..)
+                .require_equals(true)
+                .value_delimiter(',')
+                .action(ArgAction::Append)
         )
         .arg(
             arg!(-d --"define")
@@ -156,6 +166,13 @@ pub fn exec_scan(args: &ArgMatches) -> anyhow::Result<()> {
 
         rules
     } else {
+        // Vector with the IDs of the warnings that should be disabled, if the
+        // vector contains "all", all warnings are disabled.
+        let disabled_warnings = args
+            .get_many::<String>("disable-warnings")
+            .map(|warnings| warnings.map(|id| id.as_str()).collect())
+            .unwrap_or_default();
+
         // With `take()` we pass the external variables to `compile_rules`,
         // while leaving a `None` in `external_vars`. This way external
         // variables are not set again in the scanner.
@@ -164,6 +181,7 @@ pub fn exec_scan(args: &ArgMatches) -> anyhow::Result<()> {
             path_as_namespace,
             external_vars.take(),
             args.get_flag("relaxed-re-syntax"),
+            disabled_warnings,
         )?
     };
 

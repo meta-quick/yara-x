@@ -34,6 +34,16 @@ pub fn compile() -> Command {
                 .action(ArgAction::Append),
         )
         .arg(
+            arg!(-w --"disable-warnings" [WARNING_ID])
+                .help("Disable warnings")
+                .long_help(help::DISABLE_WARNINGS_LONG_HELP)
+                .default_missing_value("all")
+                .num_args(0..)
+                .require_equals(true)
+                .value_delimiter(',')
+                .action(ArgAction::Append)
+        )
+        .arg(
             arg!(--"path-as-namespace")
                 .help("Use file path as rule namespace"),
         )
@@ -52,11 +62,17 @@ pub fn exec_compile(args: &ArgMatches) -> anyhow::Result<()> {
         .get_many::<(String, serde_json::Value)>("define")
         .map(|var| var.cloned().collect());
 
+    let disabled_warnings = args
+        .get_many::<String>("disable-warnings")
+        .map(|warnings| warnings.map(|id| id.as_str()).collect())
+        .unwrap_or_default();
+
     let rules = compile_rules(
         rules_path,
         path_as_namespace,
         external_vars,
         args.get_flag("relaxed-re-syntax"),
+        disabled_warnings,
     )?;
 
     let output_file = File::create(output_path).with_context(|| {
