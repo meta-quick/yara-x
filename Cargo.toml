@@ -25,6 +25,7 @@ members = [
     "proto",
     "proto-yaml",
     "py",
+    "java"
 ]
 resolver = "2"
 
