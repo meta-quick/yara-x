@@ -9,11 +9,83 @@ extern "C" {
 #endif
 /*
  * Class:     com_datasafe_yara_Engine
- * Method:    nativeNewYaraEngine
- * Signature: ()J
+ * Method:    nativeNewYaraCompiler
+ * Signature: (ZZ)J
  */
-JNIEXPORT jlong JNICALL Java_com_datasafe_yara_Engine_nativeNewYaraEngine
-  (JNIEnv *, jclass);
+JNIEXPORT jlong JNICALL Java_com_datasafe_yara_Engine_nativeNewYaraCompiler
+  (JNIEnv *, jclass, jboolean, jboolean);
+
+/*
+ * Class:     com_datasafe_yara_Engine
+ * Method:    nativeYaraCompilerNewNamespace
+ * Signature: (JLjava/lang/String;)J
+ */
+JNIEXPORT jlong JNICALL Java_com_datasafe_yara_Engine_nativeYaraCompilerNewNamespace
+  (JNIEnv *, jclass, jlong, jstring);
+
+/*
+ * Class:     com_datasafe_yara_Engine
+ * Method:    nativeYaraCompilerAddSource
+ * Signature: (JLjava/lang/String;)J
+ */
+JNIEXPORT jlong JNICALL Java_com_datasafe_yara_Engine_nativeYaraCompilerAddSource
+  (JNIEnv *, jclass, jlong, jstring);
+
+/*
+ * Class:     com_datasafe_yara_Engine
+ * Method:    nativeYaraCompilerAddFile
+ * Signature: (JLjava/lang/String;)J
+ */
+JNIEXPORT jlong JNICALL Java_com_datasafe_yara_Engine_nativeYaraCompilerAddFile
+  (JNIEnv *, jclass, jlong, jstring);
+
+/*
+ * Class:     com_datasafe_yara_Engine
+ * Method:    nativeYaraCompilerAddFileWithNamespace
+ * Signature: (JLjava/lang/String;)J
+ */
+JNIEXPORT jlong JNICALL Java_com_datasafe_yara_Engine_nativeYaraCompilerAddFileWithNamespace
+  (JNIEnv *, jclass, jlong, jstring);
+
+/*
+ * Class:     com_datasafe_yara_Engine
+ * Method:    nativeYaraCompilerBuild
+ * Signature: (J)J
+ */
+JNIEXPORT jlong JNICALL Java_com_datasafe_yara_Engine_nativeYaraCompilerBuild
+  (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_datasafe_yara_Engine
+ * Method:    nativeCloseYaraCompiler
+ * Signature: (J)J
+ */
+JNIEXPORT jlong JNICALL Java_com_datasafe_yara_Engine_nativeCloseYaraCompiler
+  (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_datasafe_yara_Engine
+ * Method:    nativeNewScanner
+ * Signature: (J)J
+ */
+JNIEXPORT jlong JNICALL Java_com_datasafe_yara_Engine_nativeNewScanner
+  (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_datasafe_yara_Engine
+ * Method:    nativeScannerScan
+ * Signature: (J[B)J
+ */
+JNIEXPORT jlong JNICALL Java_com_datasafe_yara_Engine_nativeScannerScan
+  (JNIEnv *, jclass, jlong, jbyteArray);
+
+/*
+ * Class:     com_datasafe_yara_Engine
+ * Method:    nativeCloseScanner
+ * Signature: (J)J
+ */
+JNIEXPORT jlong JNICALL Java_com_datasafe_yara_Engine_nativeCloseScanner
+  (JNIEnv *, jclass, jlong);
 
 #ifdef __cplusplus
 }

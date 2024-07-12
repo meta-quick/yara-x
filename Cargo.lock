@@ -5308,9 +5308,19 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cedar-policy",
+ "crossbeam",
+ "crossterm 0.27.0",
+ "enable-ansi-support",
+ "globwalk",
  "jni",
+ "protobuf",
+ "protobuf-json-mapping",
+ "quote",
  "serde_json",
+ "superconsole",
+ "syn 2.0.66",
  "yara-x",
+ "yara-x-parser",
 ]
 
 [[package]]
