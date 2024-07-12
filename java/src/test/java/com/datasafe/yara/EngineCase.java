@@ -13,6 +13,8 @@ public class EngineCase extends TestCase {
             engine.addSource("rule test {\n" +
                     "            meta:\n" +
                     "                author = \"gao\"\n" +
+                    "                level = 2 \n" +
+                    "                category = \"PII\" \n" +
                     "            strings:\n" +
                     "                $a = \"foo\"\n" +
                     "                $b = \"bar\"\n" +
