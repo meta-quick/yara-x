@@ -44,17 +44,24 @@ public class Scanner implements AutoCloseable {
         engine.build();
     }
 
-
-
-    public ArrayList<ScanResults> scan(ArrayList<byte[]> data){
-        ArrayList<ScanResults> results = new ArrayList<>();
+    public ArrayList<RecallResults> scan(byte[] comments,byte[] meta,byte[] data){
+        ArrayList<RecallResults> results = new ArrayList<>();
         long batch = strategy.begin();
-        for (byte[] bytes : data) {
-            results.add(engine.scan(bytes));
-            strategy.execute(batch);
+        if (data != null) {
+            results.add(new RecallResults(engine.scan(data),MatchType.MATCH_CONTENT,50));
         }
-        strategy.finish(batch);
 
+        if (comments != null) {
+            strategy.execute(batch);
+            results.add(new RecallResults(engine.scan(comments),MatchType.MATCH_COMMENT,90));
+        }
+
+        if (meta != null) {
+            strategy.execute(batch);
+            results.add(new RecallResults(engine.scan(meta),MatchType.MATCH_META,70));
+        }
+
+        strategy.finish(batch);
         return results;
     }
 
