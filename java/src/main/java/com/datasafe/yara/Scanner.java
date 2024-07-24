@@ -24,6 +24,11 @@ public class Scanner implements AutoCloseable {
         engine.addFile(filePath);
     }
 
+    public void registerJavaRules(String rules)
+    {
+        engine.addSource(rules);
+    }
+
     public void addFileWithNamespace(String filePath)
     {
         engine.addFileWithNamespace(filePath);
@@ -48,17 +53,39 @@ public class Scanner implements AutoCloseable {
         ArrayList<RecallResults> results = new ArrayList<>();
         long batch = strategy.begin();
         if (data != null) {
-            results.add(new RecallResults(engine.scan(data),MatchType.MATCH_CONTENT,50));
+            strategy.execute(batch);
+            ScanResults ret = engine.scan(data);
+            if (ret != null) {
+                results.add(new RecallResults(ret,MatchType.MATCH_CONTENT,50));
+            }
+            ret = engine.scanJavaRules(data);
+            if (ret != null) {
+                results.add(new RecallResults(ret,MatchType.MATCH_CONTENT,50));
+            }
         }
 
         if (comments != null) {
             strategy.execute(batch);
-            results.add(new RecallResults(engine.scan(comments),MatchType.MATCH_COMMENT,90));
+            ScanResults ret = engine.scan(comments);
+            if (ret != null) {
+                results.add(new RecallResults(ret,MatchType.MATCH_COMMENT,80));
+            }
+            ret = engine.scanJavaRules(comments);
+            if (ret != null) {
+                results.add(new RecallResults(ret,MatchType.MATCH_COMMENT,80));
+            }
         }
 
         if (meta != null) {
             strategy.execute(batch);
-            results.add(new RecallResults(engine.scan(meta),MatchType.MATCH_META,70));
+            ScanResults ret = engine.scan(meta);
+            if (ret != null) {
+                results.add(new RecallResults(ret,MatchType.MATCH_META,70));
+            }
+            ret = engine.scanJavaRules(meta);
+            if (ret != null) {
+                results.add(new RecallResults(ret,MatchType.MATCH_META,70));
+            }
         }
 
         strategy.finish(batch);

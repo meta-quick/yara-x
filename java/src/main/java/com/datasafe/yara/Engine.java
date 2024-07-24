@@ -10,6 +10,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 
 /**
  * @author gaosg
@@ -32,6 +35,8 @@ public class Engine implements AutoCloseable {
     private long compiler;
     private long scanner;
     private long rules;
+
+    private ArrayList<IJavaRule> internalRules = new ArrayList<>();
 
     public Engine() {
         compiler = nativeNewYaraCompiler(true,true);
@@ -90,6 +95,28 @@ public class Engine implements AutoCloseable {
             scanner = 0;
             rules = 0;
         }
+    }
+
+    public void registerJavaRules(ArrayList<IJavaRule> rules) {
+        this.internalRules = rules;
+    }
+
+    public void registerJavaRule(IJavaRule rule) {
+        this.internalRules.add(rule);
+    }
+
+    public ScanResults scanJavaRules(byte[] data){
+        ScanResults scanResults = new ScanResults();
+        for (IJavaRule rule : internalRules) {
+            MatchingRules matchingRules = rule.scan(data);
+            if (matchingRules != null) {
+                scanResults.addMatchingRule(matchingRules);
+            }
+        }
+        if (!scanResults.matching_rules.isEmpty()) {
+            return scanResults;
+        }
+        return null;
     }
 
     public ScanResults scan(byte[] data) {
