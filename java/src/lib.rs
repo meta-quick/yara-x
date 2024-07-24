@@ -395,26 +395,18 @@ mod test {
         );
 
         compiler.new_namespace("foo");
-        compiler.add_source("rule test {
-            meta:
-                author = \"gao\"
-            strings:
-                $a = \"foo\"
-                $b = \"bar\"
-            condition:
-                all of them
-        }").unwrap();
+        let re =  compiler.add_source(r###"rule ChineseLicensePlateDetection
+{
+    strings:
+        // 完整的车牌号模式
+        $license_plate = /^[京|津|沪|渝]{1}[A-Z]{1}$/
 
-        compiler.new_namespace("foo1");
-        compiler.add_source("rule test1 {
-            meta:
-                author = \"gao\"
-            strings:
-                $a = \"hello\"
-                $b = \"world\"
-            condition:
-                all of them
-        }").unwrap();
+    condition:
+        // 检测到完整的车牌号模式
+        any of them
+}
+"###);
+        assert!(re.is_ok());
 
 
 
@@ -423,8 +415,9 @@ mod test {
             let pinned = Rules::new(rules);
 
             let mut scanner = Scanner::new(Box::into_raw(Box::new(pinned)) as jlong);
-            let data = b"foobar helloworld";
-            let result = scanner.scan(data);
+            // let data = b"\xE4\xBA\xAC1";
+            let data = "京A";
+            let result = scanner.scan(data.as_bytes());
             let result = result.unwrap().to_json();
             println!("{}", result);
         }

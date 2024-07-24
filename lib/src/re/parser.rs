@@ -277,8 +277,8 @@ impl Parser {
         let mut translator = re::hir::translate::TranslatorBuilder::new()
             .case_insensitive(case_insensitive)
             .dot_matches_new_line(regexp.dot_matches_new_line())
-            .unicode(false)
-            .utf8(false)
+            .unicode(true)
+            .utf8(true)
             .build();
 
         let hir =
