@@ -105,6 +105,10 @@ public class Engine implements AutoCloseable {
         this.internalRules.add(rule);
     }
 
+    public void clearJavaRules(){
+        this.internalRules.clear();
+    }
+
     public ScanResults scanJavaRules(byte[] data){
         ScanResults scanResults = new ScanResults();
         for (IJavaRule rule : internalRules) {

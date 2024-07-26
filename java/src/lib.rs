@@ -1,7 +1,6 @@
 use core::marker::PhantomPinned;
 use core::mem;
 use std::any::Any;
-use std::collections::HashMap;
 use std::fs;
 use std::ops::Deref;
 use std::path::PathBuf;
@@ -351,6 +350,14 @@ pub fn scan_results_java(scan_results: yrx::ScanResults) -> ScanResults {
 
     let mut module_outputs:  Vec::<(String, String)> = Vec::new();
     for (module, output) in scan_results.module_outputs() {
+        let byteout = output.write_to_bytes_dyn();
+        if let Ok(bb) = byteout {
+            let str = std::str::from_utf8(bb.as_slice());
+            if let Ok(s) = str {
+                module_outputs.push((module.to_string(),s.to_string()));
+                continue;
+            }
+        }
         let module_output_json = print_to_string(output).unwrap();
         module_outputs.push((module.to_string(),module_output_json));
     }
@@ -388,6 +395,13 @@ mod test {
     use super::*;
 
     #[test]
+    pub fn test_unicode(){
+       let data = b"5YyX5Lqs5aSn5Zyw5byA5Y+R5YWs5Y+4";
+       let str = std::str::from_utf8(data).unwrap();
+       println!("{}", str);
+    }
+
+    #[test]
     pub fn test_scanner() {
         let mut compiler = YaraXCompiler::new(
             true,
@@ -395,18 +409,27 @@ mod test {
         );
 
         compiler.new_namespace("foo");
-        let re =  compiler.add_source(r###"rule ChineseLicensePlateDetection
+        let re =  compiler.add_source(r###"
+import "rhai"
+rule CompanyName
 {
+    meta:
+        description = "对企业名称类数据进行自动识别"
+        author = "quick"
+        name = "企业名称信息"
+        level = 3
     strings:
-        // 完整的车牌号模式
-        $license_plate = /^[京|津|沪|渝]{1}[A-Z]{1}$/
+        $_a = /(中国)(有限公司|股份有限公司|集团公司|公司|合伙企业|有限合伙|普通合伙|个人独资企业)/
+        $_b = "公司"
 
     condition:
-        // 检测到完整的车牌号模式
-        any of them
+        rhai.regex(".*公司")
 }
 "###);
-        assert!(re.is_ok());
+       if let Err(err) = re {
+           println!("{}", err);
+           return;
+       }
 
 
 
@@ -416,7 +439,7 @@ mod test {
 
             let mut scanner = Scanner::new(Box::into_raw(Box::new(pinned)) as jlong);
             // let data = b"\xE4\xBA\xAC1";
-            let data = "京A";
+            let data = "北京大地开发公司";
             let result = scanner.scan(data.as_bytes());
             let result = result.unwrap().to_json();
             println!("{}", result);

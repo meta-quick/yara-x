@@ -1628,15 +1628,25 @@ impl<'a> Compiler<'a> {
             false,
         );
 
-        let mut atoms = result.map_err(|err| match err {
+        let atoms = result.map_err(|err| match err {
             re::Error::TooLarge => Box::new(CompileError::invalid_regexp(
                 &self.report_builder,
                 "regexp is too large".to_string(),
                 span,
                 None,
             )),
+            re::Error::TooManyAlternatives => Box::new(CompileError::SlowPattern {
+                detailed_report: "too many alternatives".to_string(),
+                span: span.subspan(1,1)
+            }),
             _ => unreachable!(),
-        })?;
+        });
+
+        if let Err(err) = atoms {
+            return Err(err);
+        }
+
+        let mut atoms= atoms.unwrap();
 
         if matches!(hir.minimum_len(), Some(0)) {
             return Err(Box::new(CompileError::invalid_regexp(

@@ -23,14 +23,15 @@ public class EngineCase extends TestCase {
                     "        }");
 
             engine.addNamespace("demo1");
-            engine.addSource("rule test1 {\n" +
+            engine.addSource("import \"rhai\"\n" +
+                    "rule test1 {\n" +
                     "            meta:\n" +
                     "                author = \"gao\"\n" +
                     "            strings:\n" +
-                    "                $a = \"hello\"\n" +
-                    "                $b = \"world\"\n" +
+                    "                $_a = \"hello\"\n" +
+                    "                $_b = \"world\"\n" +
                     "            condition:\n" +
-                    "                all of them\n" +
+                    "                rhai.regex(\"hello\")\n" +
                     "        }");
 
             engine.build();

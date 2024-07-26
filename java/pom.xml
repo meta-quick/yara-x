@@ -21,7 +21,7 @@
 
     <groupId>com.datasafe.yarx</groupId>
     <artifactId>yara-binding-java</artifactId>
-    <version>0.2.0</version>
+    <version>0.2.1</version>
     <name>yara Java</name>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

@@ -4,7 +4,7 @@ use std::io::BufRead;
 //
 use crate::modules::prelude::*;
 use crate::modules::protos::python::*;
-
+use regex::bytes::Regex;
 use rhai::{Engine, Scope, Dynamic, INT};
 
 /// Module's main function.
@@ -25,6 +25,29 @@ fn main(data: &[u8]) -> Python {
 
     // Return the Text proto after filling the relevant fields.
     python_proto
+}
+
+/// Function that eval input script against the scanned data`.
+#[module_export]
+fn regex(ctx: &mut ScanContext,re :RuntimeString) -> Option<bool> {
+    // Obtain a reference to the `Text` protobuf that was returned by the
+    // module's main function.
+    let text = ctx.module_output::<Python>()?;
+    let re_expr = re.to_str(ctx).unwrap();
+    let data  = text.scanned();
+
+    //new a regex
+    let re = Regex::new(re_expr);
+    return match re {
+        Ok(re) => {
+            let ret = re.is_match(data);
+            Some(ret)
+        }
+        Err(err) => {
+            println!("{}", err);
+            return Some(false);
+        }
+    }
 }
 
 /// Function that eval input script against the scanned data`.

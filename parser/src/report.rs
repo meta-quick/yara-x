@@ -173,6 +173,7 @@ impl ReportBuilder {
 
         let message = renderer.render(message);
 
+
         message.to_string()
     }
 

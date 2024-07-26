@@ -24,9 +24,24 @@ public class Scanner implements AutoCloseable {
         engine.addFile(filePath);
     }
 
-    public void registerJavaRules(String rules)
+    public void registerJavaRule(IJavaRule rule)
     {
-        engine.addSource(rules);
+        engine.registerJavaRule(rule);
+    }
+
+    public void registerJavaRules(ArrayList<IJavaRule> rules)
+    {
+        engine.registerJavaRules(rules);
+    }
+
+    public void clearJavaRules(IJavaRule rule)
+    {
+        engine.registerJavaRule(rule);
+    }
+
+    public void clearJavaRules()
+    {
+        engine.clearJavaRules();
     }
 
     public void addFileWithNamespace(String filePath)
