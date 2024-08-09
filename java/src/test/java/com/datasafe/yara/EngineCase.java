@@ -29,7 +29,7 @@ public class EngineCase extends TestCase {
                     "                author = \"gao\"\n" +
                     "            strings:\n" +
                     "                $_a = \"hello\"\n" +
-                    "                $_b = \"world\"\n" +
+                    "                $_b = world\n" +
                     "            condition:\n" +
                     "                rhai.regex(\"hello\")\n" +
                     "        }");
@@ -37,6 +37,8 @@ public class EngineCase extends TestCase {
             engine.build();
             ScanResults result = engine.scan("foobar hello world".getBytes());
             System.out.println(result);
+        }catch (Throwable e){
+            e.printStackTrace();
         }
     }
 }

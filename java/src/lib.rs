@@ -420,7 +420,7 @@ rule CompanyName
         level = 3
     strings:
         $_a = /(中国)(有限公司|股份有限公司|集团公司|公司|合伙企业|有限合伙|普通合伙|个人独资企业)/
-        $_b = "公司"
+        $_b = 公司"
 
     condition:
         rhai.regex(".*公司")
