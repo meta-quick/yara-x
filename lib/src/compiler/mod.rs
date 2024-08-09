@@ -1822,7 +1822,7 @@ impl<'a> Compiler<'a> {
             )),
             re::Error::TooManyAlternatives => Box::new(CompileError::SlowPattern {
                 detailed_report: "too many alternatives".to_string(),
-                span: span.subspan(1,1)
+                span: (&span).into(),
             }),
             _ => unreachable!(),
         });

@@ -17,7 +17,7 @@ use serde_json::{json, Map, Value};
 
 use yara_x as yrx;
 use yara_x::Variable;
-use yara_x_parser::SourceCode;
+use yara_x::SourceCode;
 
 pub mod walk;
 
