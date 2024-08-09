@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cmp::min;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -8,11 +9,12 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Error};
 use clap::{arg, value_parser, ArgAction, ArgMatches, Command, ValueEnum};
 use crossbeam::channel::Sender;
+use itertools::Itertools;
 use superconsole::style::Stylize;
 use superconsole::{Component, Line, Lines, Span};
 use yansi::Color::{Cyan, Red, Yellow};
 use yansi::Paint;
-use yara_x::{Rule, Rules, ScanError, Scanner};
+use yara_x::{MetaValue, Rule, Rules, ScanError, Scanner};
 
 use crate::commands::{
     compile_rules, external_var_parser, truncate_with_ellipsis,
@@ -22,9 +24,10 @@ use crate::{help, walk};
 
 #[derive(Clone, ValueEnum)]
 enum OutputFormats {
+    /// Default output format.
     Text,
-    Json,
-    JsonPretty,
+    /// Newline delimited JSON (i.e: one JSON object per line).
+    Ndjson,
 }
 
 const STRINGS_LIMIT: usize = 120;
@@ -46,6 +49,13 @@ pub fn scan() -> Command {
                 .value_parser(value_parser!(PathBuf))
         )
         .arg(
+            arg!(-o --"output-format" <FORMAT>)
+                .help("Output format for results")
+                .long_help(help::OUTPUT_FORMAT_LONG_HELP)
+                .required(false)
+                .value_parser(value_parser!(OutputFormats))
+        )
+        .arg(
             arg!(-e --"print-namespace")
                 .help("Print rule namespace")
         )
@@ -59,8 +69,22 @@ pub fn scan() -> Command {
                 .value_parser(value_parser!(usize))
         )
         .arg(
+            arg!(-m --"print-meta")
+                .help("Print rule metadata")
+        )
+        .arg(
+            arg!(-g --"print-tags")
+                .help("Print rule tags")
+        )
+        .arg(
             arg!(--"disable-console-logs")
                 .help("Disable printing console log messages")
+        )
+        .arg(
+            arg!(-t --"tag" <TAG>)
+                .help("Print only rules tagged as TAG")
+                .required(false)
+                .value_parser(value_parser!(String))
         )
         .arg(
             arg!(-n --"negate")
@@ -120,13 +144,6 @@ pub fn scan() -> Command {
                 .value_name("VAR=VALUE")
                 .value_parser(external_var_parser)
                 .action(ArgAction::Append)
-        )
-        .arg(
-            arg!(-o --"output-format" <FORMAT>)
-                .help("Output format for results")
-                .long_help(help::OUTPUT_FORMAT_LONG_HELP)
-                .required(false)
-                .value_parser(value_parser!(OutputFormats))
         )
 }
 
@@ -348,6 +365,9 @@ fn print_rules_as_json(
     output: &Sender<Message>,
 ) {
     let print_namespace = args.get_flag("print-namespace");
+    let only_tag = args.get_one::<String>("tag");
+    let print_tags = args.get_flag("print-tags");
+    let print_meta = args.get_flag("print-meta");
     let print_strings = args.get_flag("print-strings");
     let print_strings_limit = args.get_one::<usize>("print-strings-limit");
 
@@ -361,6 +381,14 @@ fn print_rules_as_json(
     // `the `by_ref` method cannot be invoked on a trait object`
     #[allow(clippy::while_let_on_iterator)]
     while let Some(matching_rule) = rules.next() {
+        if only_tag.is_some()
+            && !matching_rule
+                .tags()
+                .any(|t| t.identifier() == only_tag.unwrap())
+        {
+            return;
+        }
+
         let mut json_rule = if print_namespace {
             serde_json::json!({
                 "namespace": matching_rule.namespace(),
@@ -372,10 +400,20 @@ fn print_rules_as_json(
             })
         };
 
+        if print_meta {
+            json_rule["meta"] = matching_rule.metadata().into_json();
+        }
+
+        if print_tags {
+            let tags: Vec<&str> =
+                matching_rule.tags().map(|t| t.identifier()).collect();
+            json_rule["tags"] = serde_json::json!(tags);
+        }
+
         if print_strings || print_strings_limit.is_some() {
             let limit = print_strings_limit.unwrap_or(&STRINGS_LIMIT);
+            let mut match_vec: Vec<serde_json::Value> = Vec::new();
             for p in matching_rule.patterns() {
-                let mut match_vec: Vec<serde_json::Value> = Vec::new();
                 for m in p.matches() {
                     let match_range = m.range();
                     let match_data = m.data();
@@ -397,12 +435,24 @@ fn print_rules_as_json(
                             .as_str(),
                         );
                     }
-                    let match_json = serde_json::json!({
+
+                    let mut match_json = serde_json::json!({
                         "identifier": p.identifier(),
                         "start": match_range.start,
                         "length": match_range.len(),
                         "data": s.as_str()
                     });
+
+                    if let Some(k) = m.xor_key() {
+                        let mut p = String::with_capacity(s.len());
+                        for b in &match_data[..min(match_data.len(), *limit)] {
+                            for c in (b ^ k).escape_ascii() {
+                                p.push_str(format!("{}", c as char).as_str());
+                            }
+                        }
+                        match_json["xor_key"] = serde_json::json!(k);
+                        match_json["plaintext"] = serde_json::json!(p);
+                    }
                     match_vec.push(match_json);
                 }
                 json_rule["strings"] = serde_json::json!(match_vec);
@@ -413,15 +463,7 @@ fn print_rules_as_json(
 
     json["rules"] = serde_json::json!(json_rules);
 
-    match args.get_one::<OutputFormats>("output-format") {
-        Some(OutputFormats::Json) => {
-            output.send(Message::Info(format!("{}", json))).unwrap();
-        }
-        Some(OutputFormats::JsonPretty) => {
-            output.send(Message::Info(format!("{:#}", json))).unwrap();
-        }
-        _ => {}
-    }
+    output.send(Message::Info(format!("{}", json))).unwrap();
 }
 
 fn print_rules_as_text(
@@ -431,6 +473,9 @@ fn print_rules_as_text(
     output: &Sender<Message>,
 ) {
     let print_namespace = args.get_flag("print-namespace");
+    let only_tag = args.get_one::<String>("tag");
+    let print_tags = args.get_flag("print-tags");
+    let print_meta = args.get_flag("print-meta");
     let print_strings = args.get_flag("print-strings");
     let print_strings_limit = args.get_one::<usize>("print-strings-limit");
 
@@ -439,20 +484,71 @@ fn print_rules_as_text(
     // `the `by_ref` method cannot be invoked on a trait object`
     #[allow(clippy::while_let_on_iterator)]
     while let Some(matching_rule) = rules.next() {
-        let line = if print_namespace {
+        if only_tag.is_some()
+            && !matching_rule
+                .tags()
+                .any(|t| t.identifier() == only_tag.unwrap())
+        {
+            return;
+        }
+
+        let mut line = if print_namespace {
             format!(
-                "{}:{} {}",
+                "{}:{}",
                 matching_rule.namespace().paint(Cyan).bold(),
-                matching_rule.identifier().paint(Cyan).bold(),
-                file_path.display(),
+                matching_rule.identifier().paint(Cyan).bold()
             )
         } else {
-            format!(
-                "{} {}",
-                matching_rule.identifier().paint(Cyan).bold(),
-                file_path.display()
-            )
+            format!("{}", matching_rule.identifier().paint(Cyan).bold())
         };
+
+        let tags = matching_rule.tags();
+
+        if print_tags && !tags.is_empty() {
+            line.push_str(" [");
+            for (pos, tag) in tags.with_position() {
+                line.push_str(tag.identifier());
+                if !matches!(pos, itertools::Position::Last) {
+                    line.push(',');
+                }
+            }
+            line.push(']');
+        }
+
+        let metadata = matching_rule.metadata();
+
+        if print_meta && !metadata.is_empty() {
+            line.push_str(" [");
+            for (pos, (m, v)) in metadata.with_position() {
+                match v {
+                    MetaValue::Bool(v) => {
+                        line.push_str(&format!("{}={}", m, v))
+                    }
+                    MetaValue::Integer(v) => {
+                        line.push_str(&format!("{}={}", m, v))
+                    }
+                    MetaValue::Float(v) => {
+                        line.push_str(&format!("{}={}", m, v))
+                    }
+                    MetaValue::String(v) => {
+                        line.push_str(&format!("{}=\"{}\"", m, v))
+                    }
+                    MetaValue::Bytes(v) => line.push_str(&format!(
+                        "{}=\"{}\"",
+                        m,
+                        v.escape_ascii()
+                    )),
+                };
+                if !matches!(pos, itertools::Position::Last) {
+                    line.push(',');
+                }
+            }
+            line.push(']');
+        }
+
+        line.push(' ');
+        line.push_str(&file_path.display().to_string());
+
         output.send(Message::Info(line)).unwrap();
 
         if print_strings || print_strings_limit.is_some() {
@@ -463,11 +559,30 @@ fn print_rules_as_text(
                     let match_data = m.data();
 
                     let mut msg = format!(
-                        "{:#x}:{}:{}: ",
+                        "{:#x}:{}:{}",
                         match_range.start,
                         match_range.len(),
                         p.identifier(),
                     );
+
+                    match m.xor_key() {
+                        Some(k) => {
+                            msg.push_str(format!(" xor({:#x},", k).as_str());
+                            for b in
+                                &match_data[..min(match_data.len(), *limit)]
+                            {
+                                for c in (b ^ k).escape_ascii() {
+                                    msg.push_str(
+                                        format!("{}", c as char).as_str(),
+                                    );
+                                }
+                            }
+                            msg.push_str("): ");
+                        }
+                        _ => {
+                            msg.push_str(": ");
+                        }
+                    }
 
                     for b in &match_data[..min(match_data.len(), *limit)] {
                         for c in b.escape_ascii() {
@@ -499,7 +614,7 @@ fn print_matching_rules(
     output: &Sender<Message>,
 ) {
     match args.get_one::<OutputFormats>("output-format") {
-        Some(OutputFormats::Json) | Some(OutputFormats::JsonPretty) => {
+        Some(OutputFormats::Ndjson) => {
             print_rules_as_json(args, file_path, rules, output);
         }
         Some(OutputFormats::Text) | None => {
@@ -524,6 +639,25 @@ impl ScanState {
             files_in_progress: Mutex::new(Vec::new()),
         }
     }
+}
+
+// superconsole will not print any string that contains Unicode characters that
+// are spaces but are not the ASCII space character, so we replace them all.
+// See https://github.com/VirusTotal/yara-x/pull/163 for discussion.
+fn replace_whitespace(path: &Path) -> Cow<str> {
+    let mut s = path.to_string_lossy();
+    if s.chars().any(|c| c != ' ' && c.is_whitespace()) {
+        let mut r = String::with_capacity(s.len());
+        for c in s.chars() {
+            if c.is_whitespace() {
+                r.push(' ')
+            } else {
+                r.push(c)
+            }
+        }
+        s = Cow::Owned(r);
+    }
+    s
 }
 
 impl Component for ScanState {
@@ -566,7 +700,7 @@ impl Component for ScanState {
             for (file, start_time) in
                 self.files_in_progress.lock().unwrap().iter()
             {
-                let path = file.display().to_string();
+                let path = replace_whitespace(file);
                 // The length of the elapsed is 7 characters.
                 let spaces = " "
                     .repeat(dimensions.width.saturating_sub(path.len() + 7));

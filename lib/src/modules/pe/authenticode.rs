@@ -22,6 +22,9 @@ use x509_parser::certificate::X509Certificate;
 use x509_parser::der_parser::num_bigint::BigUint;
 use x509_parser::x509::{AlgorithmIdentifier, SubjectPublicKeyInfo, X509Name};
 
+#[cfg(feature = "logging")]
+use log::error;
+
 use crate::modules::pe::asn1::{
     oid, oid_to_object_identifier, oid_to_str, Attribute, Certificate,
     ContentInfo, DigestInfo, SignedData, SignerInfo, SpcIndirectDataContent,
@@ -275,7 +278,11 @@ impl AuthenticodeParser {
                 authenticode_hasher.hash(&mut sha512);
                 sha512.finalize().to_vec()
             }
-            oid => unimplemented!("{:?}", oid),
+            _ => {
+                #[cfg(feature = "logging")]
+                error!("unknown digest algorithm: {:?}", digest_algorithm);
+                return Err(ParseError::InvalidDigestAlgorithm);
+            }
         };
 
         let authenticode_digest = indirect_data.message_digest;
@@ -337,7 +344,10 @@ impl AuthenticodeParser {
 
             certificates.extend(sd.certificates);
 
-            let cs_si = sd.signer_infos.first().unwrap();
+            let cs_si = match sd.signer_infos.first() {
+                Some(cs_si) => cs_si,
+                None => continue,
+            };
 
             let mut countersignature = Self::pkcs9_countersignature(cs_si)?;
 
@@ -749,7 +759,11 @@ fn verify_message_digest(
         rfc5912::ID_MD_5 | rfc5912::MD_5_WITH_RSA_ENCRYPTION => {
             Md5::digest(message).as_slice() == digest
         }
-        _ => unimplemented!("{:?}", algorithm.oid()),
+        _ => {
+            #[cfg(feature = "logging")]
+            error!("unknown digest algorithm: {:?}", algorithm.oid());
+            false
+        }
     }
 }
 
@@ -884,8 +898,11 @@ fn verify_signer_info(si: &SignerInfo, certs: &[Certificate<'_>]) -> bool {
             attrs_set.write_der(&mut sha512).unwrap();
             key.verify_digest::<Sha512>(sha512.finalize(), si.signature)
         }
-
-        oid => unimplemented!("{:?}", oid),
+        _ => {
+            #[cfg(feature = "logging")]
+            error!("unknown digest algorithm: {:?}", digest_algorithm);
+            false
+        }
     }
 }
 
@@ -1143,7 +1160,14 @@ impl PublicKey {
             | rfc5912::ECDSA_WITH_SHA_512 => {
                 self.verify_impl::<Sha512>(message, signature)
             }
-            _ => unimplemented!("{:?}", digest_algorithm.oid()),
+            _ => {
+                #[cfg(feature = "logging")]
+                error!(
+                    "unknown digest algorithm: {:?}",
+                    digest_algorithm.oid()
+                );
+                false
+            }
         }
     }
 

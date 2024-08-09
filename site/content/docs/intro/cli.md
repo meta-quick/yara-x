@@ -124,13 +124,29 @@ Equivalent to the previous one, but using `--disable-warnings` multiple times:
 
 Prints the rules that doesn't match instead of those that match.
 
-### --print-strings, -s
+### --output-format, -o <FORMAT>
 
-Prints the matching patterns or strings.
+Specify the output format. Available options are `text` and `ndjson`. By
+default, the output format is `text`. The `ndjson` format, which stands for
+newline-delimited JSON, presents the results as one JSON object per line. Each
+JSON object details the matches for a single file. Here is an example output:
 
-### --print-namespace, -e
+```text
+{"path": "onefile.exe","rules": [{"identifier": "some_rule"}]}
+{"path": "anotherfile.exe","rules":[{"identifier": "another_urle"}]}
+```
 
-Prints the namespace of matching rules.
+Other options like `--print-strings` and `--print-namespace` also affect the
+fields included in the JSON object. For example, using the `--print-namespace`
+option adds a "namespace" field to each JSON object.
+
+To parse the `ndjson` format, you can use the [jq](https://jqlang.github.io/jq/)
+tool. For instance, to extract only the paths of the matching files, you can
+run:
+
+```shell
+yr scan --output-format ndjson rules/test.yara /bin | jq .path
+```
 
 ### --path-as-namespace
 
@@ -141,6 +157,22 @@ rules with the same names. If you put the rules from all the files under the
 same namespace, YARA is going to complain about the duplicated rule identifiers.
 However, if every file is put under its own namespace the rule names won't
 collide.
+
+### --print-meta, -m
+
+Prints the metadata associated to matching rules.
+
+### --print-namespace, -e
+
+Prints the namespace of matching rules.
+
+### --print-strings, -s
+
+Prints the matching patterns or strings.
+
+### --print-tags, -g
+
+Print the tags associated to matching rules.
 
 ### --relaxed-re-syntax
 
@@ -166,6 +198,10 @@ must be either absolute paths, or relative to the current directory.
 ### --skip-larger <FILE_SIZE>
 
 Skips files larger than the given size in bytes.
+
+### --tag <TAG>, -t <TAG>
+
+Print only the matching rules that have the given tag.
 
 ### --threads, -p <NUM_THREADS>
 
