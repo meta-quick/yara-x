@@ -1,231 +1,234 @@
 /*! Concrete Syntax Tree (CST) for YARA rules.
 
- # Example
+A CST (also known as a lossless syntax tree) is a structured representation of
+the source code that retains all its details, including punctuation, spacing,
+comments, etc. The CST is appropriate for traversing the source code as it
+appears in its original form.
 
-```rust
-use yara_x_parser::{Parser, GrammarRule};
-let rule = r#"
- rule test {
-   condition:
-     true
- }
-"#;
+Typical uses of CSTs are code formatters, documentation generators, source
+code analysis tools, etc. One of the limitations of the CST is that it doesn’t
+know about operator’s associativity or precedence rules. Expressions appear in
+the CST as they are in the source code, without any attempt from the parser to
+group them according to operator precedence rules.
+ */
+use crate::{Parser, Span};
+use rowan::GreenNodeBuilder;
+use std::fmt::{Debug, Formatter};
+use std::str::from_utf8;
 
-let mut cst = Parser::new().build_cst(rule).unwrap();
+pub(crate) mod syntax_kind;
+pub(crate) mod syntax_stream;
 
-// The CST is an iterator that returns nodes of type CSTNode. At the top
-// level the iterator returns a single node, corresponding to the grammar
-// rule source_file`, which is the grammar's top-level rule.
-let root = cst.next().unwrap();
+use crate::cst::SyntaxKind::{COMMENT, NEWLINE, WHITESPACE};
+pub use syntax_kind::SyntaxKind;
 
-// The top-level rule is always `GrammarRule::source_file`.
-assert_eq!(root.as_rule(), GrammarRule::source_file);
-
-// With the `into_inner` method we obtain a new CST with the children of
-// the top-level node. At this level there are three possible grammar
-// rules, `import_stmt` and `rule_decl` and `EOI` (end-of-input).
-for child in root.into_inner() {
-    match child.as_rule() {
-        GrammarRule::import_stmt => {
-            // import statement
-        },
-        GrammarRule::rule_decl => {
-            // rule declaration
-        },
-        GrammarRule::EOI => {
-            // end of input
-        },
-        _ => unreachable!()
-    }
-}
-```
-
-*/
-
-use std::fmt::Debug;
-
-use pest::iterators::Pair;
-
-use crate::parser::GrammarRule;
-
-/// A node in the Concrete Syntax Tree (CST).
-#[derive(Debug)]
-pub struct CSTNode<'src> {
-    comments: bool,
-    whitespaces: bool,
-    pair: Pair<'src, GrammarRule>,
-}
-
-impl<'src> CSTNode<'src> {
-    /// Returns the grammar rule associated to this [`CSTNode`].
-    pub fn as_rule(&self) -> GrammarRule {
-        self.pair.as_rule()
-    }
-
-    /// Returns the span corresponding to this [`CSTNode`].
-    ///
-    /// [`pest::Span`] contains the positions within the original source code
-    /// where the node starts and ends.
-    pub fn as_span(&self) -> pest::Span<'src> {
-        self.pair.as_span()
-    }
-
-    /// Returns the string slice within the original source code that
-    /// corresponds to this [`CSTNode`].
-    pub fn as_str(&self) -> &'src str {
-        self.pair.as_str()
-    }
-
-    /// Returns a new [`CST`] with the children of this [`CSTNode`].
-    pub fn into_inner(self) -> CST<'src> {
-        CST {
-            comments: self.comments,
-            whitespaces: self.whitespaces,
-            pairs: Box::new(self.into_inner_pairs()),
-        }
-    }
-
-    /// Enables or disables comments while iterating the children of this
-    /// [`CSTNode`].
-    ///
-    /// While traversing a CST, the nodes corresponding to the grammar rule
-    /// `COMMENT` will be returned only if comments are enabled, and
-    /// completely ignored if otherwise. This allows traversing the CST
-    /// without having to take comments into account. The default value is
-    /// `false`.
-    pub fn comments(self, yes: bool) -> Self {
-        Self { comments: yes, whitespaces: self.whitespaces, pair: self.pair }
-    }
-
-    /// Enables or disables whitespaces while iterating the children of this
-    /// [`CSTNode`].
-    ///
-    /// While traversing a CST, the nodes corresponding to the grammar rule
-    /// `WHITESPACE` will be returned only if whitespaces are enabled, and
-    /// completely ignored if otherwise. This allows traversing the CST
-    /// without having to take whitespaces into account. Notice that newlines
-    /// are considered whitespaces in the CST. The default value is
-    /// `false`.
-    pub fn whitespaces(self, yes: bool) -> Self {
-        Self { whitespaces: yes, comments: self.comments, pair: self.pair }
-    }
-}
-
-impl<'src> CSTNode<'src> {
-    /// Similar to [`CSTNode::into_inner`] but instead of returning a [`CST`]
-    /// it returns an iterator of [`pest::iterators::Pair`].
-    ///
-    /// Better use [`CSTNode::into_inner`] if possible, this must be used only
-    /// in those cases where an iterator of pairs is required.
-    pub(crate) fn into_inner_pairs(self) -> impl PairsIterator<'src> {
-        self.pair.into_inner().filter(move |item| match item.as_rule() {
-            GrammarRule::COMMENT => self.comments,
-            GrammarRule::WHITESPACE => self.whitespaces,
-            _ => true,
-        })
-    }
-
-    /// Returns the underlying [`pest::iterators::Pair`] corresponding to
-    /// this [`CSTNode`].
-    pub(crate) fn into_pair(self) -> Pair<'src, GrammarRule> {
-        self.pair
-    }
-}
-
-impl<'src> From<Pair<'src, GrammarRule>> for CSTNode<'src> {
-    fn from(pair: Pair<'src, GrammarRule>) -> Self {
-        Self { whitespaces: false, comments: false, pair }
-    }
-}
-
-pub trait PairsIterator<'src>:
-    Iterator<Item = Pair<'src, GrammarRule>> + 'src
-{
-}
-
-impl<'src, T> PairsIterator<'src> for T where
-    T: Iterator<Item = Pair<'src, GrammarRule>> + 'src
-{
-}
-
-/// A Concrete Syntax Tree (CST) for YARA rules.
+/// Each of the events in a [`CSTStream`].
 ///
-/// A CST is a tree where each node corresponds to a grammar rule in the
-/// [`GrammarRule`] enum. This structure is actually an iterator that returns
-/// tree nodes as instances of [`CSTNode`]. In turn, each [`CSTNode`] has a
-/// [`CSTNode::into_inner`] method that returns a [`CST`] for iterating the
-/// children of that node.
-pub struct CST<'src> {
-    pub(crate) comments: bool,
-    pub(crate) whitespaces: bool,
-    pub(crate) pairs: Box<dyn PairsIterator<'src>>,
+/// See the documentation of [`CSTStream`] for more details.
+#[derive(Debug, PartialEq)]
+pub enum Event {
+    /// Indicates the beginning of a non-terminal production in the grammar.
+    Begin(SyntaxKind),
+    /// Indicates the end of a non-terminal production in the grammar.
+    End(SyntaxKind),
+    /// A terminal symbol in the grammar.
+    Token { kind: SyntaxKind, span: Span },
+    /// An error found during the parsing of the source.
+    Error { message: String, span: Span },
 }
 
-impl<'src> Iterator for CST<'src> {
-    type Item = CSTNode<'src>;
+/// A Concrete Syntax Tree (CST) represented as a stream of events.
+///
+/// Each event in the stream has one of the following types:
+///
+/// - [`Event::Token`]
+/// - [`Event::Begin`]
+/// - [`Event::End`]
+/// - [`Event::Error`]
+///
+/// [`Event::Token`] represents terminal symbols in the grammar, such as
+/// keywords, punctuation, identifiers, comments and even whitespace. Each
+/// [`Event::Token`] has an associated [`Span`] that indicates its position
+/// in the source code.
+///
+/// [`Event::Begin`] and [`Event::End`] relate to non-terminal symbols, such as
+/// expressions and statements. These events appear in pairs, with each `Begin`
+/// followed by a corresponding `End` of the same kind. A `Begin`/`End` pair
+/// represents a non-terminal node in the syntax tree, with everything in
+/// between being a child of this node.
+///
+/// [`Event::Error`] events are not technically part of the syntax tree. They
+/// contain error messages generated during parsing. Although these errors could
+/// be in a separate stream, they are integrated into the syntax tree for
+/// simplicity. Each error message is placed under the tree node that was being
+/// parsed when the error occurred.
+///
+/// Notice that [`Event::Error`] and `Event::Begin(ERROR)` are not the same,
+/// and both of them can appear in the stream. The former is an error message
+/// issued by the parser, while the latter indicates the start of a CST
+/// subtree that contains portions of the syntax tree that were not correctly
+/// parsed. Of course, `Event::Begin(ERROR)` must be accompanied by a matching
+/// `Event::End(ERROR)`.
+pub struct CSTStream<'src> {
+    parser: Parser<'src>,
+    whitespaces: bool,
+    newlines: bool,
+    comments: bool,
+}
+
+impl<'src> CSTStream<'src> {
+    /// Returns the source code associated to this CSTStream.
+    #[inline]
+    pub fn source(&self) -> &'src [u8] {
+        self.parser.source()
+    }
+
+    /// Enables or disables whitespaces in the returned CST.
+    ///
+    /// If false, the resulting CST won't contain whitespaces.
+    ///
+    /// Default value is `true`.
+    pub fn whitespaces(mut self, yes: bool) -> Self {
+        self.whitespaces = yes;
+        self
+    }
+
+    /// Enables or disables newlines in the returned CST.
+    ///
+    /// If false, the resulting CST won't contain newlines.
+    ///
+    /// Default value is `true`.
+    pub fn newlines(mut self, yes: bool) -> Self {
+        self.newlines = yes;
+        self
+    }
+
+    /// Enables or disables comments in the returned CST.
+    ///
+    /// If false, the resulting CST won't contain comments.
+    ///
+    /// Default value is `true`.
+    pub fn comments(mut self, yes: bool) -> Self {
+        self.comments = yes;
+        self
+    }
+}
+
+impl<'src> From<Parser<'src>> for CSTStream<'src> {
+    /// Creates a [`CSTStream`] from the given parser.
+    fn from(parser: Parser<'src>) -> Self {
+        Self { parser, whitespaces: true, newlines: true, comments: true }
+    }
+}
+
+impl<'src> Iterator for CSTStream<'src> {
+    type Item = Event;
+
+    /// Returns the next event in the stream.
     fn next(&mut self) -> Option<Self::Item> {
-        self.pairs.next().map(|pair| CSTNode {
-            pair,
-            whitespaces: self.whitespaces,
-            comments: self.comments,
-        })
+        if self.whitespaces && self.newlines {
+            self.parser.parser.next()
+        } else {
+            loop {
+                match self.parser.parser.next()? {
+                    token @ Event::Token { kind: WHITESPACE, .. } => {
+                        if self.whitespaces {
+                            break Some(token);
+                        }
+                    }
+                    token @ Event::Token { kind: NEWLINE, .. } => {
+                        if self.newlines {
+                            break Some(token);
+                        }
+                    }
+                    token @ Event::Token { kind: COMMENT, .. } => {
+                        if self.comments {
+                            break Some(token);
+                        }
+                    }
+                    token => break Some(token),
+                }
+            }
+        }
     }
 }
 
-impl<'src> CST<'src> {
-    /// Disables or enables comments in a CST.
-    ///
-    /// Sometimes is useful to traverse the CST without having to deal with
-    /// comments that may appear all over the source code. The resulting CST
-    /// won't return instances of [`GrammarRule::COMMENT`] while the tree is
-    /// traversed.
-    pub fn comments(self, yes: bool) -> Self {
-        Self {
-            comments: yes,
-            whitespaces: self.whitespaces,
-            pairs: self.pairs,
-        }
-    }
+/// A Concrete Syntax Tree (CST) representing the structure of some YARA
+/// source code.
+pub struct CST {
+    tree: rowan::SyntaxNode<YARA>,
+    errors: Vec<(Span, String)>,
+}
 
-    /// Disables or enables whitespaces in a CST.
-    ///
-    /// Sometimes is useful to traverse the CST without having to deal with
-    /// whitespaces that may appear all over the source code. The resulting CST
-    /// won't return instances of [`GrammarRule::WHITESPACE`] while the tree is
-    /// traversed.
-    pub fn whitespaces(self, yes: bool) -> Self {
-        Self { comments: self.comments, whitespaces: yes, pairs: self.pairs }
-    }
-
-    /// Returns an ASCII tree that represents the CST.
-    #[cfg(feature = "ascii-tree")]
-    pub fn ascii_tree(&mut self) -> Vec<ascii_tree::Tree> {
-        let mut vec = Vec::new();
-        for node in self.by_ref() {
-            let node_content = node.as_str().trim();
-            let grammar_rule = node.as_rule();
-            if grammar_rule == GrammarRule::EOI {
-                continue;
+impl Debug for CST {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#?}", self.tree)?;
+        if !self.errors.is_empty() {
+            writeln!(f, "\nERRORS:")?;
+            for (span, err) in &self.errors {
+                writeln!(f, "- {}: {}", span, err)?;
             }
-            let sub_tree = node.into_inner().ascii_tree();
-            let node = if sub_tree.is_empty() {
-                let leaf = format!("{:?} \"{}\"", grammar_rule, node_content);
-                ascii_tree::Tree::Leaf(vec![leaf])
-            } else {
-                ascii_tree::Tree::Node(format!("{:?}", grammar_rule), sub_tree)
-            };
-            vec.push(node);
         }
-        vec
+        Ok(())
+    }
+}
+
+impl From<Parser<'_>> for CST {
+    /// Crates a [`CST`] from the given parser.
+    fn from(parser: Parser) -> Self {
+        let source = parser.source();
+        let mut builder = GreenNodeBuilder::new();
+        let mut prev_token_span: Option<Span> = None;
+        let mut errors = Vec::new();
+
+        for node in parser.into_cst_stream() {
+            match node {
+                Event::Begin(kind) => builder.start_node(kind.into()),
+                Event::End(_) => builder.finish_node(),
+                Event::Token { kind, span } => {
+                    // Make sure that the CST covers the whole source code,
+                    // each must start where the previous one ended.
+                    if let Some(prev_token_span) = prev_token_span {
+                        assert_eq!(
+                            prev_token_span.end(),
+                            span.start(),
+                            "gap in the CST, one token ends at {} and the next one starts at {}",
+                            prev_token_span.end(),
+                            span.start(),
+                        );
+                    }
+                    // The span must within the source code, this unwrap
+                    // can't fail.
+                    let token = source.get(span.range()).unwrap();
+                    // Tokens are always valid UTF-8, this unwrap can't
+                    // fail.
+                    // TODO: use from_utf8_unchecked?
+                    let token = from_utf8(token).unwrap();
+                    builder.token(kind.into(), token);
+                    prev_token_span = Some(span);
+                }
+                Event::Error { message, span } => errors.push((span, message)),
+            }
+        }
+
+        Self { tree: rowan::SyntaxNode::new_root(builder.finish()), errors }
+    }
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct YARA();
+
+impl rowan::Language for YARA {
+    type Kind = SyntaxKind;
+
+    /// Convert from [`rowan::SyntaxKind`] kind to [`SyntaxKind`].
+    fn kind_from_raw(raw: rowan::SyntaxKind) -> SyntaxKind {
+        unsafe { std::mem::transmute::<u16, SyntaxKind>(raw.0) }
     }
 
-    /// Returns a String with an ASCII tree that represents the CST.
-    #[cfg(feature = "ascii-tree")]
-    pub fn ascii_tree_string(&mut self) -> String {
-        let mut buf = String::new();
-        for tree in self.ascii_tree() {
-            ascii_tree::write_tree(&mut buf, &tree).unwrap();
-        }
-        buf
+    /// Convert from [`SyntaxKind`] to [`rowan::SyntaxKind`].
+    fn kind_to_raw(kind: SyntaxKind) -> rowan::SyntaxKind {
+        kind.into()
     }
 }
