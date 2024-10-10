@@ -26,14 +26,14 @@ use crate::compiler::{
     NamespaceId, PatternId, RegexpId, RuleId, Rules, SubPattern,
     SubPatternAtom, SubPatternFlagSet, SubPatternFlags, SubPatternId,
 };
-use crate::re::fast::fastvm::FastVM;
-use crate::re::thompson::pikevm::PikeVM;
+use crate::re::fast::FastVM;
+use crate::re::thompson::PikeVM;
 use crate::re::Action;
 use crate::scanner::matches::{Match, PatternMatches, UnconfirmedMatch};
+use crate::scanner::ScanError;
 use crate::scanner::HEARTBEAT_COUNTER;
 use crate::types::{Array, Map, Struct};
 use crate::wasm::MATCHING_RULES_BITMAP_BASE;
-use crate::ScanError;
 
 /// Structure that holds information about the current scan.
 pub(crate) struct ScanContext<'r> {
@@ -312,13 +312,18 @@ impl ScanContext<'_> {
         bits.set(rule_id.into(), true);
     }
 
-    /// Called during the scan process when a pattern has matched for tracking
-    /// the matching patterns.
+    /// Called during the scan process when a pattern match has been found.
+    ///
+    /// `pattern_id` is the ID of the matching pattern, `match_` contains
+    /// details about the match (range and xor key), and `replace_if_longer`
+    /// indicates whether existing matches for the same pattern at the same
+    /// offset should be replaced by the current match if the current is
+    /// longer.
     pub(crate) fn track_pattern_match(
         &mut self,
         pattern_id: PatternId,
         match_: Match,
-        replace: bool,
+        replace_if_longer: bool,
     ) {
         let wasm_store = unsafe { self.wasm_store.as_mut() };
         let mem = self.main_memory.unwrap().data_mut(wasm_store);
@@ -332,7 +337,7 @@ impl ScanContext<'_> {
 
         bits.set(pattern_id.into(), true);
 
-        if !self.pattern_matches.add(pattern_id, match_, replace) {
+        if !self.pattern_matches.add(pattern_id, match_, replace_if_longer) {
             self.limit_reached.insert(pattern_id);
         }
     }

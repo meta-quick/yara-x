@@ -22,11 +22,6 @@ use std::str::from_utf8;
 #[cfg(feature = "logging")]
 use log::*;
 
-mod token_stream;
-
-#[cfg(test)]
-mod tests;
-
 use crate::ast::AST;
 use crate::cst::syntax_stream::SyntaxStream;
 use crate::cst::SyntaxKind::*;
@@ -35,6 +30,11 @@ use crate::cst::{CSTStream, Event, SyntaxKind};
 use crate::parser::token_stream::TokenStream;
 use crate::tokenizer::{Token, TokenId, Tokenizer};
 use crate::Span;
+
+mod token_stream;
+
+#[cfg(test)]
+mod tests;
 
 /// Produces a CST or AST given some YARA source code.
 pub struct Parser<'src> {
@@ -78,7 +78,7 @@ impl<'src> Parser<'src> {
 }
 
 /// Describes the state of the parser.
-enum ParserState {
+enum State {
     /// Indicates that the parser is as the start of the input.
     StartOfInput,
     /// Indicates that the parser is at the end of the input.
@@ -88,6 +88,9 @@ enum ParserState {
     /// The parser has failed to parse some portion of the source code. It can
     /// recover from the failure and go back to OK.
     Failure,
+    /// The parser is out fuel. See the `fuel` field in [`ParserImpl`] for
+    /// details.
+    OutOfFuel,
 }
 
 /// Internal implementation of the parser. The [`Parser`] type is only a
@@ -100,7 +103,7 @@ pub(crate) struct ParserImpl<'src> {
     output: SyntaxStream,
 
     /// The current state of the parser.
-    state: ParserState,
+    state: State,
 
     /// How deep is the parser into "optional" branches of the grammar. An
     /// optional branch is one that can fail without the whole production
@@ -172,7 +175,7 @@ pub(crate) struct ParserImpl<'src> {
 
     /// A cache for storing partial parser results. Each item in the set is a
     /// (position, SyntaxKind) tuple, where position is the absolute index
-    /// of a token withing the source code. The presence of a tuple in the
+    /// of a token within the source code. The presence of a tuple in the
     /// cache indicates that the non-terminal indicated by SyntaxKind failed
     /// to match that position. Notice that only parser failures are cached,
     /// but successes are not cached. [packrat][1] parsers usually cache both
@@ -183,6 +186,12 @@ pub(crate) struct ParserImpl<'src> {
     ///
     /// [1]: https://en.wikipedia.org/wiki/Packrat_parser
     cache: FxHashSet<(usize, SyntaxKind)>,
+
+    /// This is a mechanism for preventing the parser to take a huge amount of
+    /// time parsing pathologically bad inputs. The parser starts with a certain
+    /// amount of fuel that is decremented every time it starts parsing a
+    /// non-terminal symbol. If the fuel reaches 0, the parsing is aborted.
+    fuel: usize,
 }
 
 impl<'src> From<Tokenizer<'src>> for ParserImpl<'src> {
@@ -199,7 +208,8 @@ impl<'src> From<Tokenizer<'src>> for ParserImpl<'src> {
             not_depth: 0,
             #[cfg(feature = "logging")]
             depth: 0,
-            state: ParserState::StartOfInput,
+            state: State::StartOfInput,
+            fuel: 100_000_000,
         }
     }
 }
@@ -210,11 +220,11 @@ impl Iterator for ParserImpl<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.state {
-            ParserState::StartOfInput => {
-                self.state = ParserState::OK;
+            State::StartOfInput => {
+                self.state = State::OK;
                 Some(Event::Begin(SOURCE_FILE))
             }
-            ParserState::EndOfInput => None,
+            State::EndOfInput => None,
             _ => {
                 // If the output buffer isn't empty, return a buffered event.
                 if let Some(token) = self.output.pop() {
@@ -229,19 +239,21 @@ impl Iterator for ParserImpl<'_> {
                 // code lazily, one top-level item at a time, saving memory by
                 // avoiding tokenizing the entire input at once, or producing all
                 // the events before they are consumed.
-                if self.tokens.has_more() {
+                if !matches!(self.state, State::OutOfFuel)
+                    && self.tokens.has_more()
+                {
                     let _ = self.trivia();
                     let _ = self.top_level_item();
                     self.flush_errors();
                     self.cache.clear();
-                    self.state = ParserState::OK;
+                    self.set_state(State::OK);
                 }
                 // If still there are no more tokens, we have reached the end of
                 // the input.
                 if let Some(token) = self.output.pop() {
                     Some(token)
                 } else {
-                    self.state = ParserState::EndOfInput;
+                    self.state = State::EndOfInput;
                     Some(Event::End(SOURCE_FILE))
                 }
             }
@@ -342,7 +354,7 @@ impl<'src> ParserImpl<'src> {
 
     /// Switches to hex pattern mode.
     fn enter_hex_pattern_mode(&mut self) -> &mut Self {
-        if matches!(self.state, ParserState::Failure) {
+        if matches!(self.state, State::Failure | State::OutOfFuel) {
             return self;
         }
         self.tokens.enter_hex_pattern_mode();
@@ -351,11 +363,19 @@ impl<'src> ParserImpl<'src> {
 
     /// Switches to hex jump mode.
     fn enter_hex_jump_mode(&mut self) -> &mut Self {
-        if matches!(self.state, ParserState::Failure) {
+        if matches!(self.state, State::Failure | State::OutOfFuel) {
             return self;
         }
         self.tokens.enter_hex_jump_mode();
         self
+    }
+
+    /// Sets the parser state, except if the current state is
+    /// [`State::OutOfFuel`], in that  case the state remains unchanged.
+    fn set_state(&mut self, state: State) {
+        if !matches!(self.state, State::OutOfFuel) {
+            self.state = state;
+        }
     }
 
     /// Indicates the start of a non-terminal symbol of a given kind.
@@ -378,6 +398,12 @@ impl<'src> ParserImpl<'src> {
             self.depth += 1;
         }
 
+        if let Some(fuel) = self.fuel.checked_sub(1) {
+            self.fuel = fuel;
+        } else {
+            self.state = State::OutOfFuel;
+        }
+
         self.output.begin(kind);
         self
     }
@@ -389,7 +415,7 @@ impl<'src> ParserImpl<'src> {
         {
             self.depth -= 1;
         }
-        if matches!(self.state, ParserState::Failure) {
+        if matches!(self.state, State::Failure | State::OutOfFuel) {
             self.output.end_with_error();
         } else {
             self.output.end();
@@ -415,7 +441,7 @@ impl<'src> ParserImpl<'src> {
 
                 self.trivia();
                 self.bump();
-                self.state = ParserState::Failure;
+                self.set_state(State::Failure);
 
                 // If there were previous errors, flush those errors and
                 // don't produce new ones, but if no previous error exist
@@ -456,10 +482,10 @@ impl<'src> ParserImpl<'src> {
         self
     }
 
-    /// Sets the parser state to [`ParserState::OK`], regardless of the
-    /// previous state.
+    /// Sets the parser state to [`State::OK`] if its previous state was
+    /// [`State::Failure`].
     fn recover(&mut self) -> &mut Self {
-        self.state = ParserState::OK;
+        self.set_state(State::OK);
         self
     }
 
@@ -468,7 +494,7 @@ impl<'src> ParserImpl<'src> {
     /// Trivia tokens those that are not really part of the language, like
     /// whitespaces, newlines and comments.
     fn trivia(&mut self) -> &mut Self {
-        if matches!(self.state, ParserState::Failure) {
+        if matches!(self.state, State::Failure | State::OutOfFuel) {
             return self;
         }
         while let Some(token) = self.peek() {
@@ -502,7 +528,7 @@ impl<'src> ParserImpl<'src> {
     ) -> &mut Self {
         debug_assert!(!expected_tokens.is_empty());
 
-        if matches!(self.state, ParserState::Failure) {
+        if matches!(self.state, State::Failure | State::OutOfFuel) {
             return self;
         }
 
@@ -568,7 +594,7 @@ impl<'src> ParserImpl<'src> {
                 self.flush_errors()
             }
         } else {
-            self.state = ParserState::Failure;
+            self.set_state(State::Failure);
         }
 
         self
@@ -603,7 +629,7 @@ impl<'src> ParserImpl<'src> {
     where
         P: Fn(&mut Self) -> &mut Self,
     {
-        if matches!(self.state, ParserState::Failure) {
+        if matches!(self.state, State::Failure | State::OutOfFuel) {
             return self;
         }
 
@@ -615,7 +641,7 @@ impl<'src> ParserImpl<'src> {
         self.opt_depth -= 1;
 
         // Any error occurred while parsing the optional production is ignored.
-        if matches!(self.state, ParserState::Failure) {
+        if matches!(self.state, State::Failure) {
             self.recover();
             self.restore_bookmark(&bookmark);
         }
@@ -631,7 +657,7 @@ impl<'src> ParserImpl<'src> {
     where
         P: Fn(&mut Self) -> &mut Self,
     {
-        if matches!(self.state, ParserState::Failure) {
+        if matches!(self.state, State::Failure | State::OutOfFuel) {
             return self;
         }
 
@@ -644,8 +670,9 @@ impl<'src> ParserImpl<'src> {
         self.not_depth -= 1;
 
         self.state = match self.state {
-            ParserState::OK => ParserState::Failure,
-            ParserState::Failure => ParserState::OK,
+            State::OK => State::Failure,
+            State::Failure => State::OK,
+            State::OutOfFuel => State::OutOfFuel,
             _ => unreachable!(),
         };
 
@@ -687,7 +714,7 @@ impl<'src> ParserImpl<'src> {
     where
         P: Fn(&mut Self) -> &mut Self,
     {
-        if matches!(self.state, ParserState::Failure) {
+        if matches!(self.state, State::Failure | State::OutOfFuel) {
             return self;
         }
         match self.peek_non_trivia() {
@@ -763,14 +790,14 @@ impl<'src> ParserImpl<'src> {
     where
         P: Fn(&mut Self) -> &mut Self,
     {
-        if matches!(self.state, ParserState::Failure) {
+        if matches!(self.state, State::Failure | State::OutOfFuel) {
             return self;
         }
         // The first N times that `f` is called it must match.
         for _ in 0..n {
             self.trivia();
             parser(self);
-            if matches!(self.state, ParserState::Failure) {
+            if matches!(self.state, State::Failure | State::OutOfFuel) {
                 return self;
             }
         }
@@ -782,7 +809,7 @@ impl<'src> ParserImpl<'src> {
             self.opt_depth += 1;
             parser(self);
             self.opt_depth -= 1;
-            if matches!(self.state, ParserState::Failure) {
+            if matches!(self.state, State::Failure | State::OutOfFuel) {
                 self.recover();
                 self.restore_bookmark(&bookmark);
                 self.remove_bookmark(bookmark);
@@ -799,7 +826,7 @@ impl<'src> ParserImpl<'src> {
     where
         P: Fn(&mut Self) -> &mut Self,
     {
-        if matches!(self.state, ParserState::Failure) {
+        if matches!(self.state, State::Failure | State::OutOfFuel) {
             return self;
         }
         self.trivia();
@@ -811,16 +838,20 @@ impl<'src> ParserImpl<'src> {
     where
         P: Fn(&mut Self) -> &mut Self,
     {
+        if matches!(self.state, State::OutOfFuel) {
+            return self;
+        }
+
         let start_index = self.tokens.current_token_index();
 
         if self.cache.contains(&(start_index, kind)) {
-            self.state = ParserState::Failure;
+            self.set_state(State::Failure);
             return self;
         }
 
         parser(self);
 
-        if matches!(self.state, ParserState::Failure) {
+        if matches!(self.state, State::Failure) {
             self.cache.insert((start_index, kind));
         }
 
@@ -996,7 +1027,7 @@ impl<'src> ParserImpl<'src> {
         let token = match self.peek() {
             Some(token) => token,
             None => {
-                self.state = ParserState::Failure;
+                self.set_state(State::Failure);
                 return self;
             }
         };
@@ -1025,7 +1056,7 @@ impl<'src> ParserImpl<'src> {
                     self.bump();
                 }
                 self.output.end();
-                self.state = ParserState::Failure;
+                self.set_state(State::Failure);
                 self
             }
         }
@@ -1209,17 +1240,15 @@ impl<'src> ParserImpl<'src> {
                 )
             })
             .alt(|p| {
-                p.expect_d(t!(BASE64_KW | BASE64WIDE_KW), DESC).opt(|p| {
-                    p.expect(t!(L_PAREN))
-                        .expect(t!(STRING_LIT))
-                        .expect(t!(R_PAREN))
-                })
+                p.expect_d(t!(BASE64_KW | BASE64WIDE_KW), DESC)
+                    .cond(t!(L_PAREN), |p| {
+                        p.expect(t!(STRING_LIT)).expect(t!(R_PAREN))
+                    })
             })
             .alt(|p| {
-                p.expect_d(t!(XOR_KW), DESC).opt(|p| {
-                    p.expect(t!(L_PAREN))
-                        .expect(t!(INTEGER_LIT))
-                        .opt(|p| p.expect(t!(HYPHEN)).expect(t!(INTEGER_LIT)))
+                p.expect_d(t!(XOR_KW), DESC).cond(t!(L_PAREN), |p| {
+                    p.expect(t!(INTEGER_LIT))
+                        .cond(t!(HYPHEN), |p| p.expect(t!(INTEGER_LIT)))
                         .expect(t!(R_PAREN))
                 })
             })
@@ -1227,20 +1256,7 @@ impl<'src> ParserImpl<'src> {
             .end()
     }
 
-    /// Parses the condition block.
-    ///
-    /// ```text
-    /// CONDITION_BLK := `condition` `:` BOOLEAN_EXPR
-    /// ``
-    fn condition_blk(&mut self) -> &mut Self {
-        self.begin(CONDITION_BLK)
-            .expect(t!(CONDITION_KW))
-            .expect(t!(COLON))
-            .then(|p| p.boolean_expr())
-            .end_with_recovery(t!(R_BRACE))
-    }
-
-    /// Parses the condition block.
+    /// Parses the hex pattern block.
     ///
     /// ```text
     /// HEX_PATTERN := `{` HEX_SUB_PATTERN `}`
@@ -1254,7 +1270,7 @@ impl<'src> ParserImpl<'src> {
             .end()
     }
 
-    /// Parses the condition block.
+    /// Parses the hex sub pattern block.
     ///
     /// ```text
     /// HEX_SUB_PATTERN :=
@@ -1311,6 +1327,19 @@ impl<'src> ParserImpl<'src> {
             .end()
     }
 
+    /// Parses the condition block.
+    ///
+    /// ```text
+    /// CONDITION_BLK := `condition` `:` BOOLEAN_EXPR
+    /// ``
+    fn condition_blk(&mut self) -> &mut Self {
+        self.begin(CONDITION_BLK)
+            .expect(t!(CONDITION_KW))
+            .expect(t!(COLON))
+            .then(|p| p.boolean_expr())
+            .end_with_recovery(t!(R_BRACE))
+    }
+
     /// Parses a boolean expression.
     ///
     /// ```text
@@ -1343,9 +1372,15 @@ impl<'src> ParserImpl<'src> {
         self.begin(BOOLEAN_TERM)
             .begin_alt()
             .alt(|p| {
-                p.expect_d(t!(PATTERN_IDENT), DESC)
-                    .cond(t!(AT_KW), |p| p.expr())
-                    .cond(t!(IN_KW), |p| p.range())
+                p.expect_d(t!(PATTERN_IDENT), DESC).if_next(
+                    t!(AT_KW | IN_KW),
+                    |p| {
+                        p.begin_alt()
+                            .alt(|p| p.expect(t!(AT_KW)).expr())
+                            .alt(|p| p.expect(t!(IN_KW)).range())
+                            .end_alt()
+                    },
+                )
             })
             .alt(|p| p.expect_d(t!(TRUE_KW | FALSE_KW), DESC))
             .alt(|p| {
@@ -1354,6 +1389,7 @@ impl<'src> ParserImpl<'src> {
             })
             .alt(|p| p.for_expr())
             .alt(|p| p.of_expr())
+            .alt(|p| p.with_expr())
             .alt(|p| {
                 p.expr().zero_or_more(|p| {
                     p.expect_d(
@@ -1389,51 +1425,64 @@ impl<'src> ParserImpl<'src> {
     ///
     /// ```text
     /// EXPR := (
-    ///    TERM  ( (arithmetic_op | bitwise_op | `.`) TERM)*
+    ///    TERM  ( (arithmetic_op | bitwise_op | `.`) TERM )*
     /// )
     /// ``
     fn expr(&mut self) -> &mut Self {
-        self.begin(EXPR)
-            .term()
-            .zero_or_more(|p| {
-                p.expect_d(
-                    t!(ADD
-                        | SUB
-                        | MUL
-                        | DIV
-                        | MOD
-                        | SHL
-                        | SHR
-                        | BITWISE_AND
-                        | BITWISE_OR
-                        | BITWISE_XOR
-                        | DOT),
-                    Some("operator"),
-                )
-                .then(|p| p.term())
-            })
-            .end()
+        self.cached(EXPR, |p| {
+            p.begin(EXPR)
+                .term()
+                .zero_or_more(|p| {
+                    p.expect_d(
+                        t!(ADD
+                            | SUB
+                            | MUL
+                            | DIV
+                            | MOD
+                            | SHL
+                            | SHR
+                            | BITWISE_AND
+                            | BITWISE_OR
+                            | BITWISE_XOR
+                            | DOT),
+                        Some("operator"),
+                    )
+                    .then(|p| p.term())
+                })
+                .end()
+        })
     }
 
     /// Parses a term.
     ///
     /// ```text
     /// TERM := (
-    ///     indexing_expr   |
-    ///     func_call_expr  |
-    ///     primary_expr    |
+    ///     PRIMARY_EXPR
+    ///     (
+    ///        `[` EXPR `]` |
+    ///        `(` BOOLEAN_EXPR (`,` BOOLEAN_EXPR )* `)`
+    ///     )?
     /// )
     /// ``
     fn term(&mut self) -> &mut Self {
         self.begin(TERM)
             .then(|p| p.primary_expr())
-            .cond(t!(L_BRACKET), |p| p.expr().expect(t!(R_BRACKET)))
-            .cond(t!(L_PAREN), |p| {
-                p.opt(|p| p.boolean_expr())
-                    .zero_or_more(|p| {
-                        p.expect(t!(COMMA)).then(|p| p.boolean_expr())
+            .if_next(t!(L_BRACKET | L_PAREN), |p| {
+                p.begin_alt()
+                    .alt(|p| {
+                        p.expect(t!(L_BRACKET)).expr().expect(t!(R_BRACKET))
                     })
-                    .expect(t!(R_PAREN))
+                    .alt(|p| {
+                        p.expect(t!(L_PAREN))
+                            .opt(|p| {
+                                p.boolean_expr().zero_or_more(|p| {
+                                    p.expect(t!(COMMA))
+                                        .then(|p| p.boolean_expr())
+                                })
+                            })
+                            .expect(t!(R_PAREN))
+                    })
+                    .end_alt()
             })
             .end()
     }
@@ -1492,16 +1541,13 @@ impl<'src> ParserImpl<'src> {
                 })
                 .alt(|p| {
                     p.expect_d(t!(PATTERN_COUNT), DESC)
-                        .opt(|p| p.expect(t!(IN_KW)).then(|p| p.range()))
+                        .cond(t!(IN_KW), |p| p.range())
                 })
                 .alt(|p| {
-                    p.expect_d(t!(PATTERN_OFFSET | PATTERN_LENGTH), DESC).opt(
-                        |p| {
-                            p.expect(t!(L_BRACKET))
-                                .then(|p| p.expr())
-                                .expect(t!(R_BRACKET))
-                        },
-                    )
+                    p.expect_d(t!(PATTERN_OFFSET | PATTERN_LENGTH), DESC)
+                        .cond(t!(L_BRACKET), |p| {
+                            p.expr().expect(t!(R_BRACKET))
+                        })
                 })
                 .alt(|p| p.expect_d(t!(MINUS), DESC).then(|p| p.term()))
                 .alt(|p| p.expect_d(t!(BITWISE_NOT), DESC).then(|p| p.term()))
@@ -1557,7 +1603,7 @@ impl<'src> ParserImpl<'src> {
     /// Parses `of` expression.
     ///
     /// ```text
-    /// OF := QUANTIFIER (
+    /// OF_EXPR := QUANTIFIER (
     ///     `of` ( `them` | PATTERN_IDENT_TUPLE ) ( `at` EXPR | `in` RANGE )? |
     ///     BOOLEAN_EXPR_TUPLE
     /// )
@@ -1572,13 +1618,60 @@ impl<'src> ParserImpl<'src> {
                     .alt(|p| p.expect(t!(THEM_KW)))
                     .alt(|p| p.pattern_ident_tuple())
                     .end_alt()
-                    .cond(t!(AT_KW), |p| p.expr())
-                    .cond(t!(IN_KW), |p| p.range())
+                    .if_next(t!(AT_KW | IN_KW), |p| {
+                        p.begin_alt()
+                            .alt(|p| p.expect(t!(AT_KW)).expr())
+                            .alt(|p| p.expect(t!(IN_KW)).range())
+                            .end_alt()
+                    })
             })
             .alt(|p| {
                 p.boolean_expr_tuple().not(|p| p.expect(t!(AT_KW | IN_KW)))
             })
             .end_alt()
+            .end()
+    }
+
+    /// Parses `with` expression.
+    ///
+    /// ```text
+    /// WITH_EXPR := `with` WITH_DECLS `:` `(` BOOLEAN_EXPR `)`
+    /// ```
+    fn with_expr(&mut self) -> &mut Self {
+        self.begin(WITH_EXPR)
+            .expect(t!(WITH_KW))
+            .then(|p| p.with_declarations())
+            .expect(t!(COLON))
+            .expect(t!(L_PAREN))
+            .then(|p| p.boolean_expr())
+            .expect(t!(R_PAREN))
+            .end()
+    }
+
+    /// Parses `with` identifiers.
+    ///
+    /// ```text
+    /// WITH_DECLS := WITH_DECL (`,` WITH_DECL)*
+    ///
+    fn with_declarations(&mut self) -> &mut Self {
+        self.begin(WITH_DECLS)
+            .then(|p| p.with_declaration())
+            .zero_or_more(|p| {
+                p.expect(t!(COMMA)).then(|p| p.with_declaration())
+            })
+            .end()
+    }
+
+    /// Parses a `with` declaration.
+    ///
+    /// ```text
+    /// WITH_DECL := IDENT `=` EXPR
+    /// ```
+    fn with_declaration(&mut self) -> &mut Self {
+        self.begin(WITH_DECL)
+            .expect(t!(IDENT))
+            .expect(t!(EQUAL))
+            .then(|p| p.expr())
             .end()
     }
 
@@ -1715,7 +1808,7 @@ impl<'a, 'src> Alt<'a, 'src> {
     where
         F: Fn(&'a mut ParserImpl<'src>) -> &'a mut ParserImpl<'src>,
     {
-        if matches!(self.parser.state, ParserState::Failure) {
+        if matches!(self.parser.state, State::Failure | State::OutOfFuel) {
             return self;
         }
         // Don't try to match the current alternative if the parser a previous
@@ -1727,15 +1820,16 @@ impl<'a, 'src> Alt<'a, 'src> {
             self.parser.opt_depth -= 1;
             match self.parser.state {
                 // The current alternative matched.
-                ParserState::OK => {
+                State::OK => {
                     self.matched = true;
                 }
                 // The current alternative didn't match, restore the token
                 // stream to the position it has before trying to match.
-                ParserState::Failure => {
+                State::Failure => {
                     self.parser.recover();
                     self.parser.restore_bookmark(&self.bookmark);
                 }
+                State::OutOfFuel => {}
                 _ => unreachable!(),
             };
         }
@@ -1746,9 +1840,9 @@ impl<'a, 'src> Alt<'a, 'src> {
         self.parser.remove_bookmark(self.bookmark);
         // If none of the alternatives matched, that's a failure.
         if self.matched {
-            self.parser.state = ParserState::OK;
+            self.parser.set_state(State::OK);
         } else {
-            self.parser.state = ParserState::Failure;
+            self.parser.set_state(State::Failure);
             self.parser.handle_errors();
         };
         self.parser

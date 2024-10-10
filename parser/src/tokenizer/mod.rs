@@ -8,14 +8,14 @@ the parser. Each token is represented by a variant of the [`Token`] type.
 use std::str;
 use std::str::from_utf8;
 
-use crate::Span;
-
 use logos::Logos;
 
-mod tokens;
+use crate::Span;
 
-pub use tokens::Token;
+pub(crate) use tokens::Token;
 pub(crate) use tokens::TokenId;
+
+mod tokens;
 
 #[cfg(test)]
 mod tests;
@@ -232,6 +232,7 @@ impl<'src> Tokenizer<'src> {
             }
         };
 
+        // Truncate `unexpected` at the first whitespace if any.
         let unexpected = unexpected.split(char::is_whitespace).next().unwrap();
 
         // If `unexpected` is larger than the current token, bump the lexer to the
@@ -338,6 +339,8 @@ enum NormalToken<'src> {
     Wide,
     #[token("xor")]
     Xor,
+    #[token("with")]
+    With,
 
     // Bitwise
     #[token("<<")]
@@ -511,10 +514,10 @@ enum NormalToken<'src> {
     #[regex(
         r#"(?x)                         # allow comments in the regexp
         /                               # starts with /
-        (\\.|[^*/])                     # followed by escape sequence or anything that
-                                        # is not * or /. This prevents collision with
-                                        # commments.
-        (                               # one or more..
+        (\\.|[^*/\\\n])                 # followed by escape sequence or anything that is
+                                        # not *, /, \, or newline. This prevents collision
+                                        # with comments.
+        (                               # zero or more..
           \\.                           #   escape sequence
           |                             #   or ..
           [^\\/\n]                      #   anything except \, / and newlines
@@ -545,8 +548,9 @@ enum NormalToken<'src> {
     #[regex(r#"//[^\n]*"#)]
     Comment,
 
-    //  /\*([^*]|\*[^/])*\*/
-    #[regex("[ \t]+")]
+    // Space, tab, and many other Unicode characters that are considered spaces.
+    // https://www.compart.com/en/unicode/bidiclass/WS
+    #[regex("[ \t\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200A}\u{202f}\u{205f}]+")]
     Whitespace,
 
     #[token("\n")]
@@ -590,7 +594,9 @@ enum HexPatternToken {
     #[token("]")]
     RBracket,
 
-    #[regex("[ \t]+")]
+    // Space, tab, and many other Unicode characters that are considered spaces.
+    // https://www.compart.com/en/unicode/bidiclass/WS
+    #[regex("[ \t\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200A}\u{202f}\u{205f}]+")]
     Whitespace,
 
     #[token("\n")]
@@ -603,16 +609,19 @@ enum HexPatternToken {
     CRLF,
 
     // Block comment.
-    #[regex(r#"(?x)                    # allow comments in the regexp
+    #[regex(
+        r#"(?x)                        # allow comments in the regexp
         /\*                            # starts with /*
-        (                              # one or more..
-            [^*]                       #   anything except asterisk
-            |                          #   or..
-            \*[^/]                     #   asterisk followed by something that is not /
+        [^*]*                          # zero or more characters except *
+        \*+                            # one or more *
+        (                              # zero or more..
+            [^/*]                      #   anything except / and *
+            [^*]*                      #   zero or more characters except *
+            \*+                        #   one or more *
         )*
-        \*/                            # ends with */
-        "#)
-    ]
+        /                              # ends with /
+        "#
+    )]
     BlockComment,
 
     // Single-line comment
@@ -641,7 +650,9 @@ enum HexJumpToken<'src> {
     ]
     IntegerLit(&'src [u8]),
 
-    #[regex("[ \t]+")]
+    // Space, tab, and many other Unicode characters that are considered spaces.
+    // https://www.compart.com/en/unicode/bidiclass/WS
+    #[regex("[ \t\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200A}\u{202f}\u{205f}]+")]
     Whitespace,
 
     #[token("\n")]
@@ -695,6 +706,7 @@ fn convert_normal_token(token: NormalToken, span: Span) -> Token {
         NormalToken::True => Token::TRUE_KW(span),
         NormalToken::Wide => Token::WIDE_KW(span),
         NormalToken::Xor => Token::XOR_KW(span),
+        NormalToken::With => Token::WITH_KW(span),
 
         // Bitwise.
         NormalToken::Shl => Token::SHL(span),

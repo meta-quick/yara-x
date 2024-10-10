@@ -1,14 +1,17 @@
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{c_char, CStr};
 use std::slice;
 use std::time::Duration;
-use yara_x::ScanError;
 
-use crate::{LAST_ERROR, YRX_RESULT, YRX_RULE, YRX_RULES};
+use yara_x::errors::ScanError;
+
+use crate::{
+    _yrx_set_last_error, YRX_RESULT, YRX_RULE, YRX_RULES, YRX_RULE_CALLBACK,
+};
 
 /// A scanner that scans data with a set of compiled YARA rules.
 pub struct YRX_SCANNER<'s> {
     inner: yara_x::Scanner<'s>,
-    on_matching_rule: Option<(YRX_ON_MATCHING_RULE, *mut std::ffi::c_void)>,
+    on_matching_rule: Option<(YRX_RULE_CALLBACK, *mut std::ffi::c_void)>,
 }
 
 /// Creates a [`YRX_SCANNER`] object that can be used for scanning data with
@@ -31,7 +34,7 @@ pub unsafe extern "C" fn yrx_scanner_create(
     };
 
     *scanner = Box::into_raw(Box::new(YRX_SCANNER {
-        inner: yara_x::Scanner::new(&rules.0),
+        inner: yara_x::Scanner::new(rules.inner()),
         on_matching_rule: None,
     }));
 
@@ -77,6 +80,8 @@ pub unsafe extern "C" fn yrx_scanner_scan(
     data: *const u8,
     len: usize,
 ) -> YRX_RESULT {
+    _yrx_set_last_error::<ScanError>(None);
+
     if scanner.is_null() {
         return YRX_RESULT::INVALID_ARGUMENT;
     }
@@ -90,41 +95,24 @@ pub unsafe extern "C" fn yrx_scanner_scan(
     let scan_results = scanner.inner.scan(data);
 
     if let Err(err) = scan_results {
-        LAST_ERROR.set(Some(CString::new(err.to_string()).unwrap()));
-        return match err {
+        let result = match err {
             ScanError::Timeout => YRX_RESULT::SCAN_TIMEOUT,
             _ => YRX_RESULT::SCAN_ERROR,
         };
+        _yrx_set_last_error(Some(err));
+        return result;
     }
 
     let scan_results = scan_results.unwrap();
 
     if let Some((callback, user_data)) = scanner.on_matching_rule {
         for r in scan_results.matching_rules() {
-            let rule = YRX_RULE(r);
-            callback(&rule as *const YRX_RULE, user_data);
+            callback(&YRX_RULE::new(r), user_data);
         }
     }
 
-    LAST_ERROR.set(None);
     YRX_RESULT::SUCCESS
 }
-
-/// Callback function passed to the scanner via [`yrx_scanner_on_matching_rule`]
-/// which receives notifications about matching rules.
-///
-/// The callback receives a pointer to the matching rule, represented by a
-/// [`YRX_RULE`] structure. This pointer is guaranteed to be valid while the
-/// callback function is being executed, but it may be freed after the callback
-/// function returns, so you cannot use the pointer outside the callback.
-///
-/// It also receives the `user_data` pointer that was passed to the  
-/// [`yrx_scanner_on_matching_rule`] function, which can point to arbitrary
-/// data owned by the user.
-pub type YRX_ON_MATCHING_RULE = extern "C" fn(
-    rule: *const YRX_RULE,
-    user_data: *mut std::ffi::c_void,
-) -> ();
 
 /// Sets a callback function that is called by the scanner for each rule that
 /// matched during a scan.
@@ -133,11 +121,11 @@ pub type YRX_ON_MATCHING_RULE = extern "C" fn(
 /// callback function. If the callback is not set, the scanner doesn't notify
 /// about matching rules.
 ///
-/// See [`YRX_ON_MATCHING_RULE`] for more details.
+/// See [`YRX_RULE_CALLBACK`] for more details.
 #[no_mangle]
 pub unsafe extern "C" fn yrx_scanner_on_matching_rule(
     scanner: *mut YRX_SCANNER,
-    callback: YRX_ON_MATCHING_RULE,
+    callback: YRX_RULE_CALLBACK,
     user_data: *mut std::ffi::c_void,
 ) -> YRX_RESULT {
     if let Some(scanner) = scanner.as_mut() {
@@ -161,7 +149,8 @@ pub unsafe extern "C" fn yrx_scanner_on_matching_rule(
 ///
 /// 1) When the module does not produce any output on its own.
 /// 2) When you already know the output of the module for the upcoming file to
-/// be scanned, and you prefer to reuse this data instead of generating it again.
+///    be scanned, and you prefer to reuse this data instead of generating it
+///    again.
 ///
 /// Case 1) applies to certain modules lacking a main function, thus incapable of
 /// producing any output on their own. For such modules, you must set the output
@@ -194,7 +183,7 @@ pub unsafe extern "C" fn yrx_scanner_set_module_output(
     let module_name = match CStr::from_ptr(name).to_str() {
         Ok(name) => name,
         Err(err) => {
-            LAST_ERROR.set(Some(CString::new(err.to_string()).unwrap()));
+            _yrx_set_last_error(Some(err));
             return YRX_RESULT::INVALID_UTF8;
         }
     };
@@ -208,18 +197,18 @@ pub unsafe extern "C" fn yrx_scanner_set_module_output(
 
     match scanner.inner.set_module_output_raw(module_name, data) {
         Ok(_) => {
-            LAST_ERROR.set(None);
+            _yrx_set_last_error::<ScanError>(None);
             YRX_RESULT::SUCCESS
         }
         Err(err) => {
-            LAST_ERROR.set(Some(CString::new(err.to_string()).unwrap()));
+            _yrx_set_last_error(Some(err));
             YRX_RESULT::SCAN_ERROR
         }
     }
 }
 
 unsafe extern "C" fn yrx_scanner_set_global<
-    T: TryInto<yara_x::Variable, Error = yara_x::VariableError>,
+    T: TryInto<yara_x::Variable, Error = yara_x::errors::VariableError>,
 >(
     scanner: *mut YRX_SCANNER,
     ident: *const c_char,
@@ -232,7 +221,7 @@ unsafe extern "C" fn yrx_scanner_set_global<
     let ident = match CStr::from_ptr(ident).to_str() {
         Ok(ident) => ident,
         Err(err) => {
-            LAST_ERROR.set(Some(CString::new(err.to_string()).unwrap()));
+            _yrx_set_last_error(Some(err));
             return YRX_RESULT::INVALID_UTF8;
         }
     };
@@ -241,11 +230,11 @@ unsafe extern "C" fn yrx_scanner_set_global<
 
     match scanner.inner.set_global(ident, value) {
         Ok(_) => {
-            LAST_ERROR.set(None);
+            _yrx_set_last_error::<ScanError>(None);
             YRX_RESULT::SUCCESS
         }
         Err(err) => {
-            LAST_ERROR.set(Some(CString::new(err.to_string()).unwrap()));
+            _yrx_set_last_error(Some(err));
             YRX_RESULT::VARIABLE_ERROR
         }
     }
@@ -261,7 +250,7 @@ pub unsafe extern "C" fn yrx_scanner_set_global_str(
     match CStr::from_ptr(value).to_str() {
         Ok(value) => yrx_scanner_set_global(scanner, ident, value),
         Err(err) => {
-            LAST_ERROR.set(Some(CString::new(err.to_string()).unwrap()));
+            _yrx_set_last_error(Some(err));
             YRX_RESULT::INVALID_UTF8
         }
     }

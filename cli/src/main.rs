@@ -1,7 +1,9 @@
 mod commands;
+mod config;
 mod help;
 mod walk;
 
+use config::{load_config_from_file, Config};
 use crossterm::tty::IsTty;
 use std::{io, panic, process};
 use yansi::Color::Red;
@@ -9,13 +11,17 @@ use yansi::Paint;
 
 use crate::commands::cli;
 
-const APP_HELP_TEMPLATE: &str = r#"{about-with-newline}
+const APP_HELP_TEMPLATE: &str = r#"YARA-X {version}, the pattern matching swiss army knife.
+
 {author-with-newline}
 {before-help}{usage-heading}
-    {usage}
+  {usage}
 
 {all-args}{after-help}
 "#;
+
+const EXIT_ERROR: i32 = 1;
+const CONFIG_FILE: &str = ".yara-x.toml";
 
 fn main() -> anyhow::Result<()> {
     // Enable support for ANSI escape codes in Windows. In other platforms
@@ -52,14 +58,23 @@ fn main() -> anyhow::Result<()> {
     panic::set_hook(Box::new(move |panic_info| {
         // invoke the default handler and exit the process
         orig_hook(panic_info);
-        process::exit(1);
+        process::exit(EXIT_ERROR);
     }));
 
+    let config: Config = match home::home_dir() {
+        Some(home_path) if !home_path.as_os_str().is_empty() => {
+            load_config_from_file(&home_path.join(CONFIG_FILE))
+                .unwrap_or_default()
+        }
+        _ => Config::default(),
+    };
+
     let result = match args.subcommand() {
+        #[cfg(feature = "debug-cmd")]
         Some(("debug", args)) => commands::exec_debug(args),
         Some(("check", args)) => commands::exec_check(args),
         Some(("fix", args)) => commands::exec_fix(args),
-        Some(("fmt", args)) => commands::exec_fmt(args),
+        Some(("fmt", args)) => commands::exec_fmt(args, config.fmt),
         Some(("scan", args)) => commands::exec_scan(args),
         Some(("dump", args)) => commands::exec_dump(args),
         Some(("compile", args)) => commands::exec_compile(args),
@@ -75,28 +90,12 @@ fn main() -> anyhow::Result<()> {
     };
 
     if let Err(err) = result {
-        match err.downcast_ref::<yara_x::Error>() {
-            // Errors produced by the compiler already have colors and start
-            // with "error:", in such cases the error is printed as is.
-            Some(yara_x::Error::CompileError(_)) => {
-                eprintln!("{}", err);
-            }
-            // In all other cases imitate the style of compiler errors, so that
-            // they all look in the same way.
-            _ => {
-                if let Some(source) = err.source() {
-                    eprintln!(
-                        "{} {}: {}",
-                        "error:".paint(Red).bold(),
-                        err,
-                        source
-                    );
-                } else {
-                    eprintln!("{} {}", "error:".paint(Red).bold(), err);
-                }
-            }
+        if let Some(source) = err.source() {
+            eprintln!("{} {}: {}", "error:".paint(Red).bold(), err, source);
+        } else {
+            eprintln!("{} {}", "error:".paint(Red).bold(), err);
         }
-        process::exit(1);
+        process::exit(EXIT_ERROR);
     }
 
     Ok(())

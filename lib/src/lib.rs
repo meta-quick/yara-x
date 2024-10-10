@@ -44,32 +44,26 @@ assert_eq!(results.matching_rules().len(), 1);
 #![deny(missing_docs)]
 
 pub use compiler::compile;
-pub use compiler::CompileError;
 pub use compiler::Compiler;
-pub use compiler::Error;
 pub use compiler::Rules;
-pub use compiler::SerializationError;
+pub use compiler::RulesIter;
 pub use compiler::SourceCode;
-pub use compiler::Warning;
-
-pub use scanner::Match;
-pub use scanner::Matches;
+pub use models::Match;
+pub use models::Matches;
+pub use models::MetaValue;
+pub use models::Metadata;
+pub use models::Pattern;
+pub use models::Patterns;
+pub use models::Rule;
+pub use modules::mods;
 pub use scanner::MatchingRules;
-pub use scanner::MetaValue;
-pub use scanner::Metadata;
 pub use scanner::ModuleOutputs;
 pub use scanner::NonMatchingRules;
-pub use scanner::Pattern;
-pub use scanner::Patterns;
-pub use scanner::Rule;
 pub use scanner::ScanError;
+pub use scanner::ScanOptions;
 pub use scanner::ScanResults;
 pub use scanner::Scanner;
-
-pub use modules::mods;
-
 pub use variables::Variable;
-pub use variables::VariableError;
 
 mod compiler;
 mod modules;
@@ -81,8 +75,25 @@ mod types;
 mod variables;
 mod wasm;
 
+mod models;
 #[cfg(test)]
 mod tests;
+
+pub mod errors {
+    //! Errors returned by this crate.
+    //!
+    //! This module contains the definitions for all error types returned by this
+    //! crate.
+    pub use crate::compiler::errors::*;
+    pub use crate::compiler::InvalidWarningCode;
+    pub use crate::scanner::ScanError;
+    pub use crate::variables::VariableError;
+}
+
+pub mod warnings {
+    //! Warnings returned while compiling rules.
+    pub use crate::compiler::warnings::*;
+}
 
 mod utils {
     /// Tries to match `target` as the enum variant `pat`. Returns the

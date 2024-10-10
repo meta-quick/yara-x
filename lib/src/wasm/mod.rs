@@ -71,8 +71,8 @@ indexes: the index of `some_module` within the global structure, the index
 of `some_struct` within `some_module`, and finally the index of `some_int`,
 within `some_struct`. These indexes are stored starting at offset 1024 in
 the WASM module's main memory (see "Memory layout") before calling
-[`lookup_integer`], while the global variable `lookup_num_lookup_indexes` says how
-many indexes to lookup.
+[`lookup_integer`], while the global variable `lookup_num_lookup_indexes` says
+how many indexes to lookup.
 
 See the [`lookup_field`] function.
 
@@ -94,12 +94,11 @@ use yara_x_macros::wasm_export;
 
 use crate::compiler::{LiteralId, PatternId, RegexpId, RuleId};
 use crate::modules::BUILTIN_MODULES;
-use crate::scanner::{RuntimeObjectHandle, ScanContext};
+use crate::scanner::{RuntimeObjectHandle, ScanContext, ScanError};
 use crate::types::{
     Array, Func, FuncSignature, Map, Struct, TypeValue, Value,
 };
 use crate::wasm::string::RuntimeString;
-use crate::ScanError;
 
 pub(crate) mod builder;
 pub(crate) mod string;
@@ -135,7 +134,7 @@ pub(crate) struct WasmExport {
     /// [`yara_x_parser::types::MangledFnName`].
     pub mangled_name: &'static str,
     /// True if the function is visible from YARA rules. Functions exported by
-    /// modules, as well as built-in functions like uint8, uint16, etc are
+    /// modules, as well as built-in functions like uint8, uint16, etc, are
     /// public, but many other functions callable from WASM are for internal
     /// use only and therefore are not public.
     pub public: bool,
@@ -700,7 +699,8 @@ pub(crate) struct WasmSymbols {
     pub timeout_occurred: walrus::GlobalId,
 
     /// Local variables used for temporary storage.
-    pub i64_tmp: walrus::LocalId,
+    pub i64_tmp_a: walrus::LocalId,
+    pub i64_tmp_b: walrus::LocalId,
     pub i32_tmp: walrus::LocalId,
     pub f64_tmp: walrus::LocalId,
 }
@@ -708,6 +708,17 @@ pub(crate) struct WasmSymbols {
 lazy_static! {
     pub(crate) static ref CONFIG: Config = {
         let mut config = Config::default();
+        // Wasmtime produces a nasty warning when linked against musl. The
+        // warning can be fixed by disabling native unwind information.
+        //
+        // More details:
+        //
+        // https://github.com/bytecodealliance/wasmtime/issues/8897
+        // https://github.com/VirusTotal/yara-x/issues/181
+        //
+        #[cfg(target_env = "musl")]
+        config.native_unwind_info(false);
+
         config.cranelift_opt_level(wasmtime::OptLevel::SpeedAndSize);
         config.epoch_interruption(true);
         config

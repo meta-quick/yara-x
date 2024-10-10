@@ -5,6 +5,7 @@ on:
     - 'v*'
 jobs:
   build-cli:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     env:
       CARGO_TERM_COLOR: always
     runs-on: ${{ matrix.os }}
@@ -76,15 +77,13 @@ jobs:
         path: yara-x-*
 
   build-py:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         python-version:
         - cp39
-        - cp310
-        - cp311
-        - cp312
         - pp38
         - pp39
         - pp310
@@ -134,11 +133,9 @@ jobs:
       run: pip install -U setuptools wheel twine cibuildwheel platformdirs
 
     - name: Build sdist
-      if: matrix.build == 'linux' && matrix.python-version == 'cp312'
-      # Using maturin 1.5.1 because the latest version (1.7.0) has the
-      # following issue: https://github.com/PyO3/maturin/issues/2154
+      if: matrix.build == 'linux' && matrix.python-version == 'cp39'
       run: |
-        pip install maturin==1.5.1
+        pip install maturin==1.7.1
         maturin sdist --manifest-path py/Cargo.toml -o wheelhouse
 
     - name: Build ${{ matrix.platform || matrix.os }} binaries

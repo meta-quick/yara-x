@@ -3,9 +3,10 @@ use protobuf::MessageDyn;
 use protobuf::{Message, MessageFull};
 use serde_json::json;
 
+use crate::models::MetaValue;
 use crate::mods;
-use crate::scanner::{MetaValue, Scanner};
 use crate::variables::VariableError;
+use crate::Scanner;
 
 #[test]
 fn iterators() {
@@ -250,6 +251,8 @@ fn module_outputs() {
     let scan_results = scanner.scan(b"").expect("scan should not fail");
 
     let mut outputs = scan_results.module_outputs();
+
+    assert_eq!(outputs.len(), 1);
 
     let (name, output) = outputs
         .next()

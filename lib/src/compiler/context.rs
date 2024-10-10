@@ -4,12 +4,13 @@ use std::rc::Rc;
 
 use yara_x_parser::ast::{Ident, WithSpan};
 
+use crate::compiler::errors::{CompileError, UnknownPattern};
 use crate::compiler::ir::PatternIdx;
 use crate::compiler::report::ReportBuilder;
 use crate::compiler::{ir, Warnings};
 use crate::symbols::{StackedSymbolTable, SymbolLookup};
 use crate::types::Type;
-use crate::{wasm, CompileError};
+use crate::wasm;
 
 /// Structure that contains information and data structures required during the
 /// current compilation process.
@@ -40,6 +41,11 @@ pub(in crate::compiler) struct CompileContext<'a, 'src, 'sym> {
     /// Allow invalid escape sequences in regular expressions.
     pub relaxed_re_syntax: bool,
 
+    /// If true, a slow loop produces an error instead of a warning. A slow
+    /// rule is one where the upper bound of the loop is potentially large.
+    /// Like for example: `for all x in (0..filesize) : (...)`
+    pub error_on_slow_loop: bool,
+
     /// Indicates how deep we are inside `for .. of` statements.
     pub(crate) for_of_depth: usize,
 }
@@ -55,8 +61,7 @@ impl<'a, 'src, 'sym> CompileContext<'a, 'src, 'sym> {
     pub fn get_pattern_mut(
         &mut self,
         ident: &Ident,
-    ) -> Result<(PatternIdx, &mut ir::PatternInRule<'src>), Box<CompileError>>
-    {
+    ) -> Result<(PatternIdx, &mut ir::PatternInRule<'src>), CompileError> {
         // Make sure that identifier starts with `$`, `#`, `@` or `!`.
         debug_assert!("$#@!".contains(
             ident
@@ -71,11 +76,11 @@ impl<'a, 'src, 'sym> CompileContext<'a, 'src, 'sym> {
             .find_position(|p| p.identifier().name[1..] == ident.name[1..])
             .map(|(pos, pattern)| (PatternIdx::from(pos), pattern))
             .ok_or_else(|| {
-                Box::new(CompileError::unknown_pattern(
+                UnknownPattern::build(
                     self.report_builder,
                     ident.name.to_string(),
                     ident.span().into(),
-                ))
+                )
             })
     }
 }

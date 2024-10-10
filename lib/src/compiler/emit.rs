@@ -22,7 +22,7 @@ use walrus::{FunctionId, InstrSeqBuilder, ValType};
 
 use crate::compiler::ir::{
     Expr, ForIn, ForOf, Iterable, MatchAnchor, Of, OfItems, PatternIdx,
-    Quantifier,
+    Quantifier, With,
 };
 use crate::compiler::{
     LiteralId, PatternId, RegexpId, RuleId, RuleInfo, Var, VarStackFrame,
@@ -132,24 +132,33 @@ macro_rules! emit_shift_op {
                 //
                 //  eval lhs
                 //  eval rhs
-                //  move rhs to tmp while leaving it in the stack (local_tee)
-                //  push result form shift operation
-                //  push 0
-                //  push rhs (from tmp)
+                //  move rhs to tmp_b
+                //  move lhs to tmp_a
+                //  push rhs
                 //  push 64
                 //  is rhs less than 64?
-                //  if true                               ┐
-                //     push result form shift operation   │  select
-                //  else                                  │
-                //     push 0                             ┘
+                //  if true
+                //     push lhs
+                //     push rhs
+                //  else
+                //     push 0
                 //
-                $instr.local_tee($ctx.wasm_symbols.i64_tmp);
-                $instr.binop(BinaryOp::$int_op);
-                $instr.i64_const(0);
-                $instr.local_get($ctx.wasm_symbols.i64_tmp);
+                $instr.local_set($ctx.wasm_symbols.i64_tmp_b);
+                $instr.local_set($ctx.wasm_symbols.i64_tmp_a);
+                $instr.local_get($ctx.wasm_symbols.i64_tmp_b);
                 $instr.i64_const(64);
                 $instr.binop(BinaryOp::I64LtS);
-                $instr.select(Some(I64));
+                $instr.if_else(
+                    I64,
+                    |then_| {
+                        then_.local_get($ctx.wasm_symbols.i64_tmp_a);
+                        then_.local_get($ctx.wasm_symbols.i64_tmp_b);
+                        then_.binop(BinaryOp::$int_op);
+                    },
+                    |else_| {
+                        else_.i64_const(0);
+                    },
+                )
             }
             _ => unreachable!(),
         };
@@ -625,6 +634,10 @@ fn emit_expr(
                 emit_for_in_expr(ctx, instr, for_in);
             }
         },
+
+        Expr::With(with) => {
+            emit_with(ctx, instr, with);
+        }
 
         Expr::FuncCall(fn_call) => {
             // Emit the arguments first.
@@ -1480,8 +1493,7 @@ fn emit_of_expr_tuple(
                 load_var(ctx, instr, i);
                 emit_switch(ctx, next_item.ty.into(), instr, |ctx, instr| {
                     if let Some(expr) = expressions.next() {
-                        assert_eq!(expr.ty(), Type::Bool);
-                        emit_expr(ctx, instr, expr);
+                        emit_bool_expr(ctx, instr, expr);
                         return true;
                     }
                     false
@@ -1574,7 +1586,7 @@ fn emit_for_in_range(
 
                         // Store lower_bound in temp variable, without removing
                         // it from the stack.
-                        instr.local_tee(ctx.wasm_symbols.i64_tmp);
+                        instr.local_tee(ctx.wasm_symbols.i64_tmp_a);
 
                         // Compute upper_bound - lower_bound + 1.
                         instr.binop(BinaryOp::I64Sub);
@@ -1602,7 +1614,7 @@ fn emit_for_in_range(
 
             // Store lower_bound in `next_item`.
             set_var(ctx, instr, next_item, |ctx, instr| {
-                instr.local_get(ctx.wasm_symbols.i64_tmp);
+                instr.local_get(ctx.wasm_symbols.i64_tmp_a);
             });
         },
         // Before each iteration.
@@ -2125,6 +2137,31 @@ fn emit_for<I, B, C, A>(
     });
 }
 
+/// Emits the code for a `with` statement.
+///
+/// Each `with` statement has a corresponding <identifier> = <expression> pair.
+/// Each pair is stored in the `identifiers` and `expressions` fields of the
+/// `with` statement.
+/// For each pair, the code emitted by this function sets the variable
+/// corresponding to the identifier to the value of the emitted expression.
+/// Those variables are later used in the condition of the `with` statement.
+fn emit_with(
+    ctx: &mut EmitContext,
+    instr: &mut InstrSeqBuilder,
+    with: &mut With,
+) {
+    // Emit the code that sets the variables in the `with` statement.
+    for (id, expr) in with.declarations.iter_mut() {
+        set_var(ctx, instr, *id, |ctx, instr| {
+            emit_expr(ctx, instr, expr);
+        });
+    }
+
+    // Emit the code that evaluates the condition of the `with` statement.
+    // This condition is a boolean expression that uses the variables set
+    emit_bool_expr(ctx, instr, &mut with.condition)
+}
+
 /// Produces a switch statement by calling a `branch_generator` function
 /// multiple times.
 ///
@@ -2342,9 +2379,9 @@ fn set_vars<B>(
             | Type::Struct
             | Type::Array
             | Type::Map => {
-                instr.local_set(ctx.wasm_symbols.i64_tmp);
+                instr.local_set(ctx.wasm_symbols.i64_tmp_a);
                 instr.i32_const(var.index * Var::mem_size());
-                instr.local_get(ctx.wasm_symbols.i64_tmp);
+                instr.local_get(ctx.wasm_symbols.i64_tmp_a);
                 instr.store(
                     ctx.wasm_symbols.main_memory,
                     StoreKind::I64 { atomic: false },
@@ -2779,7 +2816,7 @@ fn throw_undef(ctx: &mut EmitContext, instr: &mut InstrSeqBuilder) {
 fn throw_undef_if_zero(ctx: &mut EmitContext, instr: &mut InstrSeqBuilder) {
     // Save the top of the stack into temp variable, but leave a copy in the
     // stack.
-    let tmp = ctx.wasm_symbols.i64_tmp;
+    let tmp = ctx.wasm_symbols.i64_tmp_a;
     instr.local_tee(tmp);
     // Is top of the stack zero? The comparison removes the value from the
     // stack.

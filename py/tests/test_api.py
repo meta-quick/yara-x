@@ -176,7 +176,7 @@ def test_xor_key():
 def test_scanner_timeout():
   compiler = ezyara.Compiler()
   compiler.add_source(
-      'rule foo {condition: for all i in (0..10000000000) : ( true )}')
+      'rule foo {condition: for all i in (0..100000000000) : ( true )}')
   scanner = ezyara.Scanner(compiler.build())
   scanner.set_timeout(1)
   with pytest.raises(ezyara.TimeoutError):
@@ -205,6 +205,39 @@ def test_serialization():
   f.seek(0)
   rules = ezyara.Rules.deserialize_from(f)
   assert len(rules.scan(b'').matching_rules) == 1
+
+
+def tests_compiler_errors():
+  compiler = yara_x.Compiler()
+
+  with pytest.raises(yara_x.CompileError):
+    compiler.add_source('rule foo { condition: bar }')
+
+  errors = compiler.errors()
+
+  assert len(errors) == 1
+  assert errors[0]['type'] == "UnknownIdentifier"
+  assert errors[0]['code'] == "E009"
+  assert errors[0]['title'] == "unknown identifier `bar`"
+
+
+def tests_compiler_warnings():
+  compiler = yara_x.Compiler()
+
+  compiler.add_source(
+      'rule test { strings: $a = {01 [0-1][0-1] 02 } condition: $a }')
+
+  warnings = compiler.warnings()
+
+  assert len(warnings) == 2
+
+  assert warnings[0]['type'] == "ConsecutiveJumps"
+  assert warnings[0]['code'] == "consecutive_jumps"
+  assert warnings[0]['title'] == "consecutive jumps in hex pattern `$a`"
+
+  assert warnings[1]['type'] == "SlowPattern"
+  assert warnings[1]['code'] == "slow_pattern"
+  assert warnings[1]['title'] == "slow pattern"
 
 
 def test_console_log():

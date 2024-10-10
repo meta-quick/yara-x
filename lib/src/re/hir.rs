@@ -1,16 +1,16 @@
+use bstr::ByteSlice;
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::ops::RangeInclusive;
 
-use regex_syntax;
-pub use regex_syntax::hir::Class;
-pub use regex_syntax::hir::ClassBytes;
-pub use regex_syntax::hir::ClassBytesRange;
-pub use regex_syntax::hir::ClassUnicode;
-pub use regex_syntax::hir::ClassUnicodeRange;
-pub use regex_syntax::hir::Dot;
-pub use regex_syntax::hir::HirKind;
-pub use regex_syntax::hir::Repetition;
+use regex_syntax::hir::Class;
+use regex_syntax::hir::ClassBytes;
+use regex_syntax::hir::ClassBytesRange;
+use regex_syntax::hir::ClassUnicode;
+use regex_syntax::hir::ClassUnicodeRange;
+use regex_syntax::hir::Dot;
+use regex_syntax::hir::HirKind;
+use regex_syntax::hir::Repetition;
 
 use yara_x_parser::ast;
 
@@ -67,7 +67,7 @@ impl From<regex_syntax::hir::Hir> for Hir {
 
 impl Hir {
     /// Pattern chaining is the process of splitting a pattern that contains very
-    /// large gaps (a.k.a jumps) into multiple pieces that are chained together.
+    /// large gaps (a.k.a. jumps) into multiple pieces that are chained together.
     ///
     /// For example, when matching the pattern `{ 01 02 03 [0-2000] 04 05 06 }` is
     /// more efficient if we split it into two patterns `{ 01 02 03}` and
@@ -78,7 +78,7 @@ impl Hir {
     /// Both `{ 01 02 03}` and `{ 04 05 06 }` are handled as if they were separate
     /// patterns, except that they are chained together.
     ///
-    /// [`PATTERN_CHAINING_THRESHOLD`] controls the how large the gap (or jump)
+    /// [`PATTERN_CHAINING_THRESHOLD`] controls how large the gap (or jump)
     /// must be in order split the pattern at that point. Gaps shorter than this
     /// value don't cause the splitting of the pattern.
     const PATTERN_CHAINING_THRESHOLD: u32 = 200;
@@ -253,6 +253,15 @@ impl Hir {
                     && !matches!(cap.sub.kind(), HirKind::Concat(_))
             }
             _ => false,
+        }
+    }
+
+    /// If the HIR represents a regular expression that can be reduced
+    /// to a literal sequence of bytes, returns the bytes.
+    pub fn as_literal_bytes(&self) -> Option<&[u8]> {
+        match self.inner.kind() {
+            HirKind::Literal(literal) => Some(literal.0.as_bytes()),
+            _ => None,
         }
     }
 }

@@ -4,11 +4,10 @@ use std::fs;
 use std::io::Write;
 use std::mem::size_of;
 
-use crate::compiler::{
-    SerializationError, SubPattern, Var, VarStack, VariableError,
-};
+use crate::compiler::{SubPattern, Var, VarStack};
+use crate::errors::{SerializationError, VariableError};
 use crate::types::Type;
-use crate::{compile, Compiler, Error, Rules, Scanner};
+use crate::{compile, Compiler, Rules, Scanner, SourceCode};
 
 #[test]
 fn serialization() {
@@ -64,6 +63,18 @@ fn namespaces() {
         .new_namespace("bar")
         .add_source("rule bar {condition: foo}")
         .is_err());
+
+    let mut compiler = Compiler::new();
+
+    // `bar` can use `foo` because they are in the same namespace, the second
+    // call to `new_namespace` has no effect.
+    assert!(compiler
+        .new_namespace("foo")
+        .add_source("rule foo {condition: true}")
+        .unwrap()
+        .new_namespace("foo")
+        .add_source("rule bar {condition: foo}")
+        .is_ok());
 }
 
 #[test]
@@ -122,9 +133,7 @@ fn globals() {
 
     assert_eq!(
         compiler.define_global("#invalid", true).err().unwrap(),
-        Error::VariableError(VariableError::InvalidIdentifier(
-            "#invalid".to_string()
-        ))
+        VariableError::InvalidIdentifier("#invalid".to_string())
     );
 
     let mut compiler = Compiler::new();
@@ -136,7 +145,7 @@ fn globals() {
             .define_global("a", false)
             .err()
             .unwrap(),
-        Error::VariableError(VariableError::AlreadyExists("a".to_string()))
+        VariableError::AlreadyExists("a".to_string())
     );
 
     let mut compiler = Compiler::new();
@@ -464,28 +473,28 @@ fn globals_json() {
         Compiler::new()
             .define_global("invalid_array", json!([1, "foo", 3]))
             .unwrap_err(),
-        Error::VariableError(VariableError::InvalidArray)
+        VariableError::InvalidArray
     );
 
     assert_eq!(
         Compiler::new()
             .define_global("invalid_array", json!([1, [2, 3], 4]))
             .unwrap_err(),
-        Error::VariableError(VariableError::InvalidArray)
+        VariableError::InvalidArray
     );
 
     assert_eq!(
         Compiler::new()
             .define_global("invalid_array", json!([1, null]))
             .unwrap_err(),
-        Error::VariableError(VariableError::InvalidArray)
+        VariableError::InvalidArray
     );
 
     assert_eq!(
         Compiler::new()
             .define_global("invalid_array", json!({ "foo": null }))
             .unwrap_err(),
-        Error::VariableError(VariableError::UnexpectedNull)
+        VariableError::UnexpectedNull
     );
 }
 
@@ -573,6 +582,40 @@ fn unsupported_modules() {
 
 #[cfg(feature = "test_proto2-module")]
 #[test]
+fn banned_modules() {
+    let mut compiler = Compiler::new();
+
+    assert_eq!(
+        compiler
+            .ban_module(
+                "test_proto2",
+                "module `test_proto2` can't be used",
+                "module `test_proto2` is used here",
+            )
+            .add_source(
+                r#"
+            import "test_proto2"
+            rule test { condition: test_proto2.int32_zero == 0}
+            "#,
+            )
+            .expect_err("expected error")
+            .to_string(),
+        r#"error[E100]: module `test_proto2` can't be used
+ --> line:2:13
+  |
+2 |             import "test_proto2"
+  |             ^^^^^^^^^^^^^^^^^^^^ module `test_proto2` is used here
+  |"#
+    );
+
+    // The only error should be the error about the use of a banned module,
+    // the condition `test_proto2.int32_zero == 0` should not produce any
+    // error.
+    assert_eq!(compiler.errors().len(), 1);
+}
+
+#[cfg(feature = "test_proto2-module")]
+#[test]
 fn import_modules() {
     let mut compiler = Compiler::new();
     assert!(compiler
@@ -604,6 +647,62 @@ fn import_modules() {
             rule bar {condition: test_proto2.int32_zero == 0}"#
         )
         .is_ok());
+}
+
+#[cfg(feature = "pe-module")]
+#[test]
+fn wrong_type() {
+    assert_eq!(
+        Compiler::new()
+            .add_source(
+                r#"
+            import "pe"
+            rule test { condition: pe.is_dll }"#
+            )
+            .expect_err("expected error")
+            .to_string(),
+        "error[E002]: wrong type
+ --> line:3:36
+  |
+3 |             rule test { condition: pe.is_dll }
+  |                                    ^^^^^^^^^ expression should be `bool`, but it is a function
+  |
+  = help: you probably meant pe.is_dll()"
+    );
+
+    assert_eq!(
+        Compiler::new()
+            .add_source(
+                r#"
+            import "pe"
+            rule test { condition: pe.sections }"#
+            )
+            .expect_err("expected error")
+            .to_string(),
+        "error[E002]: wrong type
+ --> line:3:36
+  |
+3 |             rule test { condition: pe.sections }
+  |                                    ^^^^^^^^^^^ expression should be `bool`, but it is an array
+  |"
+    );
+
+    assert_eq!(
+        Compiler::new()
+            .add_source(
+                r#"
+            import "pe"
+            rule test { condition: pe.version_info }"#
+            )
+            .expect_err("expected error")
+            .to_string(),
+        "error[E002]: wrong type
+ --> line:3:36
+  |
+3 |             rule test { condition: pe.version_info }
+  |                                    ^^^^^^^^^^^^^^^ expression should be `bool`, but it is a map
+  |"
+    );
 }
 
 #[test]
@@ -671,13 +770,13 @@ fn errors_2() {
         "error[E012]: duplicate rule `foo`
  --> line:1:6
   |
-1 | rule foo : first {condition: true}
-  |      --- note: `foo` declared here for the first time
+1 | rule foo : second {condition: true}
+  |      ^^^ duplicate declaration of `foo`
   |
  ::: line:1:6
   |
-1 | rule foo : second {condition: true}
-  |      ^^^ duplicate declaration of `foo`
+1 | rule foo : first {condition: true}
+  |      --- note: `foo` declared here for the first time
   |"
     );
 
@@ -721,6 +820,46 @@ fn utf8_errors() {
   |     ^ invalid UTF-8 character
   |"
     );
+}
+
+#[test]
+fn errors_serialization() {
+    let err = Compiler::new()
+        .add_source(
+            SourceCode::from("rule test {condition: foo}")
+                .with_origin("test.yar"),
+        )
+        .err()
+        .unwrap();
+
+    let json_error = serde_json::to_string(&err).unwrap();
+
+    let expected = json!({
+        "type": "UnknownIdentifier",
+        "code": "E009",
+        "title": "unknown identifier `foo`",
+        "line": 1,
+        "column": 23,
+        "labels":[
+            {
+                "level": "error",
+                "code_origin": "test.yar",
+                "line": 1,
+                "column": 23,
+                "span": { "start": 22, "end": 25 },
+                "text": "this identifier has not been declared"
+            }
+        ],
+        "footers": [],
+        "text": r#"error[E009]: unknown identifier `foo`
+ --> test.yar:1:23
+  |
+1 | rule test {condition: foo}
+  |                       ^^^ this identifier has not been declared
+  |"#
+    });
+
+    assert_eq!(json_error, expected.to_string());
 }
 
 #[test]
