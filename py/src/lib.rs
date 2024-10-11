@@ -7,7 +7,7 @@ Python 3.8+.
 # Usage
 
 ```python
-import ezyara
+import yara_x
 rules = yara_x.compile('rule test {strings: $a = "dummy" condition: $a}')
 matches = rules.scan(b'some dummy data')
 ```
@@ -679,7 +679,6 @@ fn map_scan_err(err: yrx::errors::ScanError) -> PyErr {
 /// >>> matches = rules.scan(b'some dummy data')
 /// ```
 #[pymodule]
-#[pyo3(name="ezyara")]
 fn yara_x(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("CompileError", m.py().get_type_bound::<CompileError>())?;
     m.add("TimeoutError", m.py().get_type_bound::<TimeoutError>())?;

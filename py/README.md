@@ -9,9 +9,9 @@ The official Python library for [YARA-X](https://virustotal.github.io/yara-x).
 Supports Python 3.8+ in Linux, MacOS and Windows.
 
 ```python
-import ezyara
+import yara_x
 
-rules = ezyara.compile('''
+rules = yara_x.compile('''
   rule test { 
     strings: 
       $a = "foobar" 

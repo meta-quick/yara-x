@@ -2028,7 +2028,7 @@ impl<'a> Compiler<'a> {
             false,
         );
 
-        let mut atoms = result.map_err(|err| match err {
+        let atoms = result.map_err(|err| match err {
             re::Error::TooLarge => InvalidRegexp::build(
                 &self.report_builder,
                 "regexp is too large".to_string(),

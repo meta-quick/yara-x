@@ -5,10 +5,8 @@ mod console;
 mod cuckoo;
 #[cfg(feature = "dotnet-module")]
 mod dotnet;
-#[cfg(feature = "lnk-module")]
-mod lnk;
-#[cfg(feature = "python-module")]
-mod python;
+#[cfg(feature = "elf-module")]
+mod elf;
 #[cfg(feature = "hash-module")]
 mod hash;
 #[cfg(feature = "lnk-module")]
@@ -21,6 +19,8 @@ mod magic;
 mod math;
 #[cfg(feature = "pe-module")]
 mod pe;
+#[cfg(feature = "python-module")]
+mod python;
 #[cfg(feature = "string-module")]
 mod string;
 #[cfg(feature = "test_proto2-module")]

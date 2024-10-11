@@ -64,14 +64,14 @@ fn generate_module_files(proto_files: Vec<FileDescriptorProto>) {
     )
     .unwrap();
 
-    // Create the add_modules.rs files, with an entry for each proto that
+    // Create the add_modules.bak files, with an entry for each proto that
     // defines a YARA module. Each entry looks like:
     //
     //  #[cfg(feature = "foo_module")]
     //  add_module!(modules, "foo", foo, Some(foo::__main__ as MainFn));
     //
     let mut add_modules_rs =
-        File::create("src/modules/add_modules.rs").unwrap();
+        File::create("src/modules/add_modules.bak").unwrap();
 
     writeln!(
         add_modules_rs,
@@ -220,7 +220,7 @@ fn main() {
     // Generate .rs files for .proto files in src/modules/protos
     proto_compiler.run_from_script();
 
-    // Decide whether the `modules.rs` and `add_modules.rs` files should be
+    // Decide whether the `modules.rs` and `add_modules.bak` files should be
     // re-generated. By default, they will be re-generated.
     let mut regenerate_modules_rs = true;
 

@@ -200,7 +200,7 @@ jobs:
 
     - name: Publish crate
       env:
-        # Don't re-generate the files `modules.rs` and `add_modules.rs`, use
+        # Don't re-generate the files `modules.rs` and `add_modules.bak`, use
         # the ones in the repository. These files can't be regenerated because
         # `cargo publish` checks that the repository doesn't change during
         # the build. See: https://github.com/rust-lang/cargo/pull/5584

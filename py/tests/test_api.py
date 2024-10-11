@@ -1,22 +1,22 @@
 import io
 import pytest
-import ezyara
+import yara_x
 
 
 def test_syntax_error():
-  compiler = ezyara.Compiler()
-  with pytest.raises(ezyara.CompileError):
+  compiler = yara_x.Compiler()
+  with pytest.raises(yara_x.CompileError):
     compiler.add_source('bad rule')
 
 
 def test_bad_variable_type():
-  compiler = ezyara.Compiler()
+  compiler = yara_x.Compiler()
   with pytest.raises(TypeError):
     compiler.define_global()
 
 
 def test_relaxed_re_syntax():
-  compiler = ezyara.Compiler(relaxed_re_syntax=True)
+  compiler = yara_x.Compiler(relaxed_re_syntax=True)
   compiler.add_source(r'rule test {strings: $a = /\Release/ condition: $a}')
   rules = compiler.build()
   matching_rules = rules.scan(b'Release').matching_rules
@@ -24,18 +24,18 @@ def test_relaxed_re_syntax():
 
 
 def test_error_on_slow_pattern():
-  compiler = ezyara.Compiler(error_on_slow_pattern=True)
-	compiler.add_source(r'rule test {strings: $a = /a.*/ condition: $a}')
-
+  compiler = yara_x.Compiler(error_on_slow_pattern=True)
+  with pytest.raises(yara_x.CompileError):
+    compiler.add_source(r'rule test {strings: $a = /a.*/ condition: $a}')
 
 
 def test_int_globals():
-  compiler = ezyara.Compiler()
+  compiler = yara_x.Compiler()
   compiler.define_global('some_int', 1)
   compiler.add_source('rule test {condition: some_int == 1}')
   rules = compiler.build()
 
-  scanner = ezyara.Scanner(rules)
+  scanner = yara_x.Scanner(rules)
   matching_rules = scanner.scan(b'').matching_rules
   assert len(matching_rules) == 1
 
@@ -49,12 +49,12 @@ def test_int_globals():
 
 
 def test_float_globals():
-  compiler = ezyara.Compiler()
+  compiler = yara_x.Compiler()
   compiler.define_global('some_float', 1.0)
   compiler.add_source('rule test {condition: some_float == 1.0}')
   rules = compiler.build()
 
-  scanner = ezyara.Scanner(rules)
+  scanner = yara_x.Scanner(rules)
   matching_rules = scanner.scan(b'').matching_rules
   assert len(matching_rules) == 1
 
@@ -68,12 +68,12 @@ def test_float_globals():
 
 
 def test_str_globals():
-  compiler = ezyara.Compiler()
+  compiler = yara_x.Compiler()
   compiler.define_global('some_str', 'foo')
   compiler.add_source('rule test {condition: some_str == "foo"}')
   rules = compiler.build()
 
-  scanner = ezyara.Scanner(rules)
+  scanner = yara_x.Scanner(rules)
   matching_rules = scanner.scan(b'').matching_rules
   assert len(matching_rules) == 1
 
@@ -87,7 +87,7 @@ def test_str_globals():
 
 
 def test_namespaces():
-  compiler = ezyara.Compiler()
+  compiler = yara_x.Compiler()
   compiler.new_namespace('foo')
   compiler.add_source('rule foo {strings: $foo = "foo" condition: $foo}')
   compiler.new_namespace('bar')
@@ -117,7 +117,7 @@ def test_namespaces():
 
 
 def test_metadata():
-  rules = ezyara.compile('''
+  rules = yara_x.compile('''
 	rule test {
 		meta:
 			foo = 1
@@ -142,7 +142,7 @@ def test_metadata():
 
 
 def test_compile_and_scan():
-  rules = ezyara.compile('rule foo {strings: $a = "foo" condition: $a}')
+  rules = yara_x.compile('rule foo {strings: $a = "foo" condition: $a}')
   matching_rules = rules.scan(b'foobar').matching_rules
   assert len(matching_rules) == 1
   assert matching_rules[0].identifier == 'foo'
@@ -152,7 +152,7 @@ def test_compile_and_scan():
 
 
 def test_compiler_and_scanner():
-  rules = ezyara.compile('rule foo {strings: $a = "foo" condition: $a}')
+  rules = yara_x.compile('rule foo {strings: $a = "foo" condition: $a}')
   matching_rules = rules.scan(b'foobar').matching_rules
   assert len(matching_rules) == 1
   assert matching_rules[0].identifier == 'foo'
@@ -162,7 +162,7 @@ def test_compiler_and_scanner():
 
 
 def test_xor_key():
-  rules = ezyara.compile('rule foo {strings: $a = "foo" xor condition: $a}')
+  rules = yara_x.compile('rule foo {strings: $a = "foo" xor condition: $a}')
   matching_rules = rules.scan(b'\xCC\xC5\xC5').matching_rules
   assert len(matching_rules) == 1
   assert matching_rules[0].identifier == 'foo'
@@ -174,23 +174,23 @@ def test_xor_key():
 
 
 def test_scanner_timeout():
-  compiler = ezyara.Compiler()
+  compiler = yara_x.Compiler()
   compiler.add_source(
       'rule foo {condition: for all i in (0..100000000000) : ( true )}')
-  scanner = ezyara.Scanner(compiler.build())
+  scanner = yara_x.Scanner(compiler.build())
   scanner.set_timeout(1)
-  with pytest.raises(ezyara.TimeoutError):
+  with pytest.raises(yara_x.TimeoutError):
     scanner.scan(b'foobar')
 
 
 def test_module_outputs():
-  rules = ezyara.compile('import "test_proto2" rule foo {condition: false}')
+  rules = yara_x.compile('import "test_proto2" rule foo {condition: false}')
   module_outputs = rules.scan(b'').module_outputs
   assert module_outputs['test_proto2']['int32One'] == 1
 
 
 def test_ignored_modules():
-  compiler = ezyara.Compiler()
+  compiler = yara_x.Compiler()
   compiler.ignore_module("unsupported_module")
   compiler.add_source(
       'import "unsupported_module" rule foo {condition: true}')
@@ -199,11 +199,11 @@ def test_ignored_modules():
 
 
 def test_serialization():
-  rules = ezyara.compile('rule foo {condition: true}')
+  rules = yara_x.compile('rule foo {condition: true}')
   f = io.BytesIO()
   rules.serialize_into(f)
   f.seek(0)
-  rules = ezyara.Rules.deserialize_from(f)
+  rules = yara_x.Rules.deserialize_from(f)
   assert len(rules.scan(b'').matching_rules) == 1
 
 
@@ -248,10 +248,10 @@ def test_console_log():
     if msg == 'foo':
       ok = True
 
-  compiler = ezyara.Compiler()
+  compiler = yara_x.Compiler()
   compiler.add_source(
       'import "console" rule foo {condition: console.log("foo")}')
-  scanner = ezyara.Scanner(compiler.build())
+  scanner = yara_x.Scanner(compiler.build())
   scanner.console_log(callback)
   scanner.scan(b'')
   assert ok

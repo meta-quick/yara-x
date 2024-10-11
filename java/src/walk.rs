@@ -303,6 +303,8 @@ impl<'a> Walker<'a> {
 ///     }
 /// ).unwrap();
 /// ```
+
+#[allow(dead_code)]
 pub(crate) struct ParWalker<'a> {
     num_threads: Option<u8>,
     walker: Walker<'a>,
@@ -312,6 +314,7 @@ impl<'a> ParWalker<'a> {
     /// Creates a [`ParWalker`] that walks a directory.
     ///
     /// `path` can also point to an individual file instead of a directory.
+    #[allow(dead_code)]
     pub fn path(path: &'a Path) -> Self {
         Self { walker: Walker::path(path), num_threads: None }
     }
@@ -320,6 +323,7 @@ impl<'a> ParWalker<'a> {
     /// containing one path per line.
     ///
     /// `path` points to the text file that contains the paths to be walked.
+    #[allow(dead_code)]
     pub fn file_list(path: &'a Path) -> Self {
         Self { walker: Walker::file_list(path), num_threads: None }
     }
@@ -328,6 +332,7 @@ impl<'a> ParWalker<'a> {
     ///
     /// By default, the number of threads is determined by the number of CPUs
     /// in the current host.
+    #[allow(dead_code)]
     pub fn num_threads(&mut self, n: u8) -> &mut Self {
         self.num_threads = Some(n);
         self
@@ -338,6 +343,7 @@ impl<'a> ParWalker<'a> {
     /// When the maximum depth is 0 only the files that reside in the given
     /// directory are processed, subdirectories are not processed. By default,
     /// subdirectories are traversed without depth limits.
+    #[allow(dead_code)]
     pub fn max_depth(&mut self, n: usize) -> &mut Self {
         self.walker.max_depth(n);
         self
@@ -346,11 +352,13 @@ impl<'a> ParWalker<'a> {
     /// Adds a glob pattern that controls which files will be processed.
     ///
     /// See [`Walker::filter`] for details.
+    #[allow(dead_code)]
     pub fn filter(&mut self, filter: &str) -> &mut Self {
         self.walker.filter(filter);
         self
     }
 
+    #[allow(dead_code)]
     pub fn metadata_filter(
         &mut self,
         filter: impl Fn(Metadata) -> bool + Send + 'a,
@@ -362,6 +370,7 @@ impl<'a> ParWalker<'a> {
     /// Runs `func` on every file.
     ///
     /// See [`ParWalker`] for details.
+    #[allow(dead_code)]
     pub fn walk<S, T, I, F, E>(
         self,
         state: S,

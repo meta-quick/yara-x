@@ -1,8 +1,5 @@
 package com.datasafe.yara;
 
-import cn.hutool.Hutool;
-import cn.hutool.json.JSON;
-import cn.hutool.json.JSONUtil;
 import com.google.gson.Gson;
 
 import java.io.File;
@@ -11,8 +8,6 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
 
 /**
  * @author gaosg

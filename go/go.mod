@@ -1,4 +1,4 @@
-module github.com/meta-quick/yara-x/go
+module github.com/VirusTotal/yara-x/go
 
 go 1.18
 

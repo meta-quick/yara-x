@@ -1,21 +1,18 @@
 use core::marker::PhantomPinned;
 use core::mem;
-use std::any::Any;
 use std::fs;
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::pin::Pin;
 
-use anyhow::{anyhow, Context, Error, Result};
-use crossterm::style::Stylize;
+use anyhow::{anyhow, Context, Result};
 use jni::JNIEnv;
 use jni::objects::{JClass, JString, JByteArray, JObject};
 use jni::sys::{jboolean, jlong, jstring};
-use protobuf::MessageDyn;
 use protobuf_json_mapping::print_to_string;
 use serde_json::{json, Map, Value};
 
 use yara_x as yrx;
+use yara_x::errors::VariableError;
 use yara_x::Variable;
 use yara_x::SourceCode;
 
@@ -82,7 +79,7 @@ impl<'a> YaraXCompiler<'a>{
                         self.inner.new_namespace(file_path.to_string_lossy().as_ref());
                     }
 
-                    let result =  self.inner.add_source(src);
+                    let _result =  self.inner.add_source(src);
                     Ok(())
                 },
                 // Any error occurred during walk is aborts the walk.
@@ -103,18 +100,16 @@ impl<'a> YaraXCompiler<'a>{
         Ok(())
     }
 
-    pub fn define_global<T: TryInto<Variable>>(
+    pub fn define_global<T: TryInto<Variable, Error=VariableError>>(
         &mut self,
         ident: &str,
         value: T,
-    ) -> Result<(),Error>
-    where
-        yara_x::Error: From<<T as TryInto<Variable>>::Error> {
+    ) -> Result<(), VariableError> {
         let result = self.inner.define_global(ident, value);
         match result {
             Ok(_) => { Ok(())}
-            Err(_) => {
-                Err(anyhow!("Failed to define global variable"))
+            Err(e) => {
+                Err(e)
             }
         }
     }
@@ -142,6 +137,7 @@ pub struct Rules {
 }
 
 impl Rules {
+    #[allow(dead_code)]
     fn new(rules: yrx::Rules) -> Self {
         Rules {
             inner: Box::pin(PinnedRules { rules, _pinned: PhantomPinned }),
@@ -183,7 +179,7 @@ impl Rules {
     }
 }
 
-trait to_json {
+trait ToJson {
     fn to_json(&self) -> Value;
 }
 
@@ -192,7 +188,7 @@ pub struct Pattern {
     matches: Vec<Match>,
 }
 
-impl to_json for Pattern {
+impl ToJson for Pattern {
     fn to_json(&self) -> Value {
         let mut result: Map<String, Value> = Map::new();
         result.insert("identifier".to_string(), Value::String(self.identifier.to_string()));
@@ -216,7 +212,7 @@ pub struct Match {
     xor_key: Option<u8>,
 }
 
-impl to_json for Match {
+impl ToJson for Match {
     fn to_json(&self) -> Value {
         let mut result: Map<String, Value> = Map::new();
         result.insert("offset".to_string(), Value::from(self.offset));
@@ -235,7 +231,7 @@ pub struct MetaData {
     value: String,
 }
 
-impl to_json for MetaData {
+impl ToJson for MetaData {
     fn to_json(&self) -> Value {
         let mut result:Map<String, Value> = Map::new();
         result.insert("ident".to_string(), Value::from(self.ident.to_string()));
@@ -251,7 +247,7 @@ pub struct Rule {
     patterns: Vec<Pattern>,
 }
 
-impl to_json for Rule {
+impl ToJson for Rule {
     fn to_json(&self) -> Value {
         let mut result: Map<String, Value> = Map::new();
         result.insert("identifier".to_string(), Value::String(self.identifier.to_string()));
@@ -279,7 +275,7 @@ pub struct ScanResults {
     module_outputs: Vec<(String,String)>,
 }
 
-impl to_json for ScanResults{
+impl ToJson for ScanResults{
     fn to_json(&self) -> Value {
         let mut result: Map<String, Value> = Map::new();
         let mut rule_vec:Vec<Value> = vec![];
@@ -460,7 +456,7 @@ fn throw_err<T>(mut env: JNIEnv, mut f: impl FnMut(&mut JNIEnv) -> Result<T>) ->
 
 #[no_mangle]
 pub extern "system" fn Java_com_datasafe_yara_Engine_nativeNewYaraCompiler<'local>(
-    env: JNIEnv<'local>,
+    _env: JNIEnv<'local>,
     _class: JClass<'local>,
     relaxed_re_syntax: jboolean,
     error_on_slow_pattern: jboolean,
@@ -487,7 +483,7 @@ pub extern "system" fn Java_com_datasafe_yara_Engine_nativeYaraCompilerNewNamesp
 
     match result {
         Ok(()) => 0,
-        Err(err) => {
+        Err(_err) => {
             -1
         }
     }
@@ -508,7 +504,7 @@ pub extern "system" fn Java_com_datasafe_yara_Engine_nativeYaraCompilerAddSource
 
     match result {
         Ok(()) => 0,
-        Err(err) => {
+        Err(_err) => {
             -1
         }
     }
@@ -534,7 +530,7 @@ pub extern "system" fn Java_com_datasafe_yara_Engine_nativeYaraCompilerAddFile<'
 
     match result {
         Ok(()) => 0,
-        Err(err) => {
+        Err(_err) => {
             -1
         }
     }
@@ -560,7 +556,7 @@ pub extern "system" fn Java_com_datasafe_yara_Engine_nativeYaraCompilerAddFileWi
 
     match result {
         Ok(()) => 0,
-        Err(err) => {
+        Err(_err) => {
             -1
         }
     }
@@ -572,7 +568,7 @@ pub extern "system" fn Java_com_datasafe_yara_Engine_nativeYaraCompilerBuild<'lo
     _class: JClass<'local>,
     compiler: jlong,
 ) -> jlong {
-    let result = throw_err(env, |env| {
+    let result = throw_err(env, |_env| {
         let handler = unsafe { &mut *(compiler as *mut YaraXCompiler) };
         let result = handler.build();
         result
@@ -589,7 +585,7 @@ pub extern "system" fn Java_com_datasafe_yara_Engine_nativeYaraCompilerBuild<'lo
             };
             Box::into_raw(Box::new(rules)) as jlong
         }
-        Err(err) => {
+        Err(_err) => {
             -1
         }
     }
@@ -601,7 +597,7 @@ pub extern "system" fn Java_com_datasafe_yara_Engine_nativeNewScanner<'local>(
     _class: JClass<'local>,
     rules: jlong,
 ) -> jlong {
-    let result = throw_err(env, |env| {
+    let result = throw_err(env, |_env| {
         let scanner = Scanner::new(rules);
         Ok(scanner)
     });
@@ -610,7 +606,7 @@ pub extern "system" fn Java_com_datasafe_yara_Engine_nativeNewScanner<'local>(
         Ok(scanner) => {
             Box::into_raw(Box::new(scanner)) as jlong
         }
-        Err(err) => {
+        Err(_) => {
             -1
         }
     }
@@ -641,7 +637,7 @@ pub extern "system" fn Java_com_datasafe_yara_Engine_nativeScannerScan<'local>(
         Ok(result) => {
             result
         }
-        Err(err) => {
+        Err(_) => {
             JObject::null().into_raw()
         }
     }
